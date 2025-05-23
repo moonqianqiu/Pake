@@ -1,16 +1,16 @@
 import chalk from 'chalk';
-import { program } from 'commander';
+import { program, Option } from 'commander';
 import log from 'loglevel';
 import packageJson from '../package.json';
 import BuilderProvider from './builders/BuilderProvider';
-import { DEFAULT_PAKE_OPTIONS as DEFAULT } from './defaults';
+import { DEFAULT_PAKE_OPTIONS as DEFAULT, DEFAULT_PAKE_OPTIONS } from './defaults';
 import { checkUpdateTips } from './helpers/updater';
 import handleInputOptions from './options/index';
 
 import { PakeCliOptions } from './types';
 import { validateNumberInput, validateUrlInput } from './utils/validate';
 
-const { green, yellow }= chalk;
+const { green, yellow } = chalk;
 const logo = `${chalk.green(' ____       _')}
 ${green('|  _ \\ __ _| | _____')}
 ${green('| |_) / _` | |/ / _ \\')}
@@ -18,10 +18,7 @@ ${green('|  __/ (_| |   <  __/')}  ${yellow('https://github.com/tw93/pake')}
 ${green('|_|   \\__,_|_|\\_\\___|  can turn any webpage into a desktop app with Rust.')}
 `;
 
-program
-  .addHelpText('beforeAll', logo)
-  .usage(`[url] [options]`)
-  .showHelpAfterError();
+program.addHelpText('beforeAll', logo).usage(`[url] [options]`).showHelpAfterError();
 
 program
   .argument('[url]', 'The web URL you want to package', validateUrlInput)
@@ -29,18 +26,25 @@ program
   .option('--icon <string>', 'Application icon', DEFAULT.icon)
   .option('--width <number>', 'Window width', validateNumberInput, DEFAULT.width)
   .option('--height <number>', 'Window height', validateNumberInput, DEFAULT.height)
-  .option('--transparent', 'Only for Mac, hide title bar', DEFAULT.transparent)
+  .option('--use-local-file', 'Use local file packaging', DEFAULT.useLocalFile)
   .option('--fullscreen', 'Start in full screen', DEFAULT.fullscreen)
-  .option('--user-agent <string>', 'Custom user agent', DEFAULT.userAgent)
-  .option('--show-menu', 'Show menu in app', DEFAULT.showMenu)
-  .option('--show-system-tray', 'Show system tray in app', DEFAULT.showSystemTray)
-  .option('--system-tray-icon <string>', 'Custom system tray icon', DEFAULT.systemTrayIcon)
-  .option('--iter-copy-file', 'Copy files when URL is a local file', DEFAULT.iterCopyFile)
-  .option('--multi-arch', 'Only for Mac, supports both Intel and M1', DEFAULT.multiArch)
-  .option('--targets <string>', 'Only for Linux, option "deb" or "appimage"', DEFAULT.targets)
-  .option('--inject [injects...]', 'Injection of .js or .css Files', DEFAULT.inject)
-  .option('--safe-domain [domains...]', 'Domains that Require Security Configuration"', DEFAULT.safeDomain)
-  .option('--debug', 'Debug mode', DEFAULT.debug)
+  .option('--hide-title-bar', 'For Mac, hide title bar', DEFAULT.hideTitleBar)
+  .option('--multi-arch', 'For Mac, both Intel and M1', DEFAULT.multiArch)
+  .option('--inject <url...>', 'Injection of .js or .css files', DEFAULT.inject)
+  .option('--debug', 'Debug build and more output', DEFAULT.debug)
+  .addOption(new Option('--proxy-url <url>', 'Proxy URL for all network requests').default(DEFAULT_PAKE_OPTIONS.proxyUrl).hideHelp())
+  .addOption(new Option('--user-agent <string>', 'Custom user agent').default(DEFAULT.userAgent).hideHelp())
+  .addOption(new Option('--targets <string>', 'For Linux, option "deb" or "appimage"').default(DEFAULT.targets).hideHelp())
+  .addOption(new Option('--app-version <string>', 'App version, the same as package.json version').default(DEFAULT.appVersion).hideHelp())
+  .addOption(new Option('--always-on-top', 'Always on the top level').default(DEFAULT.alwaysOnTop).hideHelp())
+  .addOption(new Option('--dark-mode', 'Force Mac app to use dark mode').default(DEFAULT.darkMode).hideHelp())
+  .addOption(new Option('--disabled-web-shortcuts', 'Disabled webPage shortcuts').default(DEFAULT.disabledWebShortcuts).hideHelp())
+  .addOption(
+    new Option('--activation-shortcut <string>', 'Shortcut key to active App').default(DEFAULT_PAKE_OPTIONS.activationShortcut).hideHelp(),
+  )
+  .addOption(new Option('--show-system-tray', 'Show system tray in app').default(DEFAULT.showSystemTray).hideHelp())
+  .addOption(new Option('--system-tray-icon <string>', 'Custom system tray icon').default(DEFAULT.systemTrayIcon).hideHelp())
+  .addOption(new Option('--installer-language <string>', 'Installer language').default(DEFAULT.installerLanguage).hideHelp())
   .version(packageJson.version, '-v, --version', 'Output the current version')
   .action(async (url: string, options: PakeCliOptions) => {
     await checkUpdateTips();
