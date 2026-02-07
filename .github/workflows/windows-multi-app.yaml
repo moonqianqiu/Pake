@@ -9,7 +9,7 @@ on:
 
 jobs:
   build:
-    name: Build 5 Apps (Windows, Serial)
+    name: Build Multi Apps (Windows, Serial)
     runs-on: windows-latest
     timeout-minutes: 180
 
