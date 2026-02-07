@@ -1,0 +1,152 @@
+name: Build Multi Apps (Windows Only)
+
+env:
+  NODE_VERSION: "22"
+  PNPM_VERSION: "10.26.2"
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build 5 Apps (Windows, Serial)
+    runs-on: windows-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable-x86_64-msvc
+
+      - name: Setup Node.js Environment
+        uses: ./.github/actions/setup-env
+        with:
+          mode: build
+
+      # --- Cache: PNPM store path (must run after pnpm exists) ---
+      - name: Get pnpm store path
+        id: pnpm_store
+        shell: pwsh
+        run: |
+          $p = pnpm store path
+          "PNPM_STORE_PATH=$p" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "PNPM_STORE_PATH=$p"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.PNPM_STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
+      # --- Cache: Rust/Cargo + Tauri target ---
+      - name: Cache cargo & tauri target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.CARGO_HOME }}\bin
+            ${{ env.CARGO_HOME }}\registry\index
+            ${{ env.CARGO_HOME }}\registry\cache
+            ${{ env.CARGO_HOME }}\git\db
+            src-tauri\target
+          key: ${{ runner.os }}-cargo-tauri-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-tauri-
+
+      - name: Build CLI (once)
+        shell: bash
+        run: pnpm run cli:build
+
+      - name: Verify CLI
+        shell: bash
+        run: |
+          ls -la dist || true
+          test -f dist/cli.js
+
+      - name: Build Apps (Windows, Serial) -> ZIP portable
+        shell: pwsh
+        timeout-minutes: 160
+        run: |
+          $apps = @(
+            @{ title="DouBao";      name="DouBao";      url="https://www.doubao.com/chat";    icon="https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/doubao_128.ico" },
+            # @{ title="Kimi";        name="Kimi";        url="https://www.kimi.com";          icon="https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/kimi_128.ico" },
+            @{ title="Qwen";        name="Qwen";        url="https://chat.qwen.ai";          icon="https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/qwen_128.ico" },
+            @{ title="Z";           name="Z";           url="https://chat.z.ai";             icon="https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/z_128.ico" },
+            @{ title="Minimax";     name="Minimax";     url="https://agent.minimaxi.com";    icon="https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/minimax_128.ico" },
+            @{ title="HuggingChat"; name="HuggingChat"; url="https://huggingface.co/chat";   icon="https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/huggingface_128.ico" }
+          )
+
+          New-Item -Path "output\windows" -ItemType Directory -Force | Out-Null
+
+          foreach ($app in $apps) {
+            Write-Host "`n=============================="
+            Write-Host "Building: $($app.title)"
+            Write-Host "=============================="
+
+            # 清理根目录遗留 exe/msi/zip，避免混淆
+            Get-ChildItem -Path "." -Filter "*.msi" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+            Get-ChildItem -Path "." -Filter "*.exe" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+
+            $zipPath = "output\windows\$($app.title)_x64.zip"
+            if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
+
+            $args = @(
+              $app.url,
+              "--name", $app.name,
+              "--icon", $app.icon,
+              "--width", "1200",
+              "--height", "780",
+              "--targets", "x64"
+            )
+
+            Write-Host "Running: node dist/cli.js $($args -join ' ')"
+            node dist/cli.js $args
+            if ($LASTEXITCODE -ne 0) { throw "Build failed for $($app.title)" }
+
+            # --- Find EXE (portable) ---
+            $exeCandidates = @()
+            $exeCandidates += Get-ChildItem -Path "src-tauri\target\x86_64-pc-windows-msvc\release\*.exe" -ErrorAction SilentlyContinue
+            $exeCandidates += Get-ChildItem -Path "src-tauri\target\release\*.exe" -ErrorAction SilentlyContinue
+            $exeCandidates += Get-ChildItem -Path "." -Filter "*.exe" -ErrorAction SilentlyContinue
+
+            # 优先找同名 exe
+            $exe = $exeCandidates | Where-Object { $_.Name -ieq "$($app.name).exe" } | Select-Object -First 1
+            if (-not $exe) {
+              # 兜底：取最新 exe
+              $exe = $exeCandidates | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            }
+
+            if (-not $exe) {
+              Write-Error "No EXE found for $($app.title)"
+              Write-Host "Searched exe locations:"
+              Write-Host "  - src-tauri\target\x86_64-pc-windows-msvc\release\"
+              Write-Host "  - src-tauri\target\release\"
+              Write-Host "  - project root"
+              exit 1
+            }
+
+            # --- Package as ZIP: unzip to run ---
+            $tmpDir = Join-Path $env:RUNNER_TEMP "pake_portable_$($app.title)"
+            if (Test-Path $tmpDir) { Remove-Item -Recurse -Force $tmpDir }
+            New-Item -ItemType Directory -Path $tmpDir | Out-Null
+
+            # 让 zip 里 exe 名字统一成 Title.exe（你也可以改回 name.exe）
+            Copy-Item $exe.FullName -Destination (Join-Path $tmpDir "$($app.title).exe") -Force
+
+            Compress-Archive -Path (Join-Path $tmpDir "*") -DestinationPath $zipPath -Force
+
+            git checkout -- src-tauri/Cargo.lock | Out-Null
+            Write-Host "Done: $zipPath (from $($exe.FullName))"
+          }
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-5-apps
+          path: output/windows/*.zip
+          retention-days: 3
