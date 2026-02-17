@@ -58,8 +58,27 @@ pub fn set_window(app: &mut App, config: &PakeConfig, tauri_config: &Config) -> 
         .visible(false)
         .user_agent(user_agent)
         .resizable(window_config.resizable)
-        .maximized(window_config.maximize)
-        .inner_size(window_config.width, window_config.height)
+        .maximized(window_config.maximize);
+
+    #[cfg(target_os = "windows")]
+    {
+        let scale_factor = app
+            .primary_monitor()
+            .ok()
+            .flatten()
+            .map(|m| m.scale_factor())
+            .unwrap_or(1.0);
+        let logical_width = window_config.width / scale_factor;
+        let logical_height = window_config.height / scale_factor;
+        window_builder = window_builder.inner_size(logical_width, logical_height);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        window_builder = window_builder.inner_size(window_config.width, window_config.height);
+    }
+
+    window_builder = window_builder
         .always_on_top(window_config.always_on_top)
         .incognito(window_config.incognito);
 
