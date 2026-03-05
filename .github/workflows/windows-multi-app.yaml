@@ -2,7 +2,7 @@ name: Build Multi Apps (Windows Only)
 
 env:
   NODE_VERSION: "22"
-  PNPM_VERSION: "10"
+  PNPM_VERSION: "10.26.2"
 
 on:
   workflow_dispatch:
@@ -24,14 +24,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ✅ 统一交给 composite action：pnpm + node(cache: pnpm) + pnpm install + rust + wix + sccache + rust-cache
-      - name: Setup Environment (Node/Rust/System + Cache + sccache)
+      - name: Setup Environment
         uses: ./.github/actions/setup-env
         with:
           mode: build
 
-      # Build CLI (once)
-      - name: Build CLI (once)
+      - name: Build CLI
         shell: pwsh
         run: pnpm run cli:build
 
@@ -56,13 +54,9 @@ jobs:
 
           New-Item -Path "output\windows" -ItemType Directory -Force | Out-Null
 
-          # ✅ “独立但可复用”：
-          # - 共享 Rust 编译缓存：所有 app 共用一个 CARGO_TARGET_DIR（放 src-tauri\target 下，swatinem/rust-cache 更容易命中）
-          # - 避免串味：每轮只清理 bundle 等容易相互影响的输出目录
+          # Keep default target path (some tooling assumes the default)
           $tauriTargetRoot = Resolve-Path "src-tauri\target"
-          $sharedTargetDir = Join-Path $tauriTargetRoot "shared"
-          New-Item -ItemType Directory -Path $sharedTargetDir -Force | Out-Null
-          $env:CARGO_TARGET_DIR = $sharedTargetDir
+          $triple = "x86_64-pc-windows-msvc"
 
           foreach ($app in $apps) {
             Write-Host "`n=============================="
@@ -72,16 +66,18 @@ jobs:
             $zipPath = "output\windows\$($app.title)_x64.zip"
             if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
 
-            $releaseDir = Join-Path $sharedTargetDir "release"
-            $bundleDir  = Join-Path $releaseDir "bundle"
-
-            # ✅ 只清理 tauri bundle 输出，避免打包信息/安装包串
-            if (Test-Path $bundleDir) { Remove-Item -Recurse -Force $bundleDir -ErrorAction SilentlyContinue }
-
-            # 可选：清理 release 下的 msi（不删除 exe，靠精确定位取正确 exe）
-            if (Test-Path $releaseDir) {
-              Get-ChildItem -Path $releaseDir -Filter "*.msi" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+            # Release directory fallback:
+            # Prefer target\<triple>\release, fallback to target\release
+            $releaseDir = Join-Path $tauriTargetRoot "$triple\release"
+            if (-not (Test-Path $releaseDir)) {
+              $releaseDir = Join-Path $tauriTargetRoot "release"
             }
+
+            # Independent but reusable strategy:
+            # 1) Only clear bundle (most likely to cause cross-app contamination)
+            # 2) Do not clear release exe (keeps incremental compilation benefits)
+            $bundleDir  = Join-Path $releaseDir "bundle"
+            if (Test-Path $bundleDir) { Remove-Item -Recurse -Force $bundleDir -ErrorAction SilentlyContinue }
 
             $args = @(
               $app.url,
@@ -93,44 +89,56 @@ jobs:
             )
 
             Write-Host "Running: node dist/cli.js $($args -join ' ')"
+            $before = Get-Date
             node dist/cli.js $args
             if ($LASTEXITCODE -ne 0) { throw "Build failed for $($app.title)" }
 
-            # ✅ 精准取 exe：release\<name>.exe
-            $expectedExe = Join-Path $releaseDir "$($app.name).exe"
-            if (-not (Test-Path $expectedExe)) {
-              # 兜底：只在 release 目录找最新 exe（不跨目录）
-              $exeFallback = Get-ChildItem -Path $releaseDir -Filter "*.exe" -ErrorAction SilentlyContinue |
-                Sort-Object LastWriteTime -Descending |
-                Select-Object -First 1
-
-              if (-not $exeFallback) {
-                Write-Error "No EXE found for $($app.title)"
-                Write-Host "Expected: $expectedExe"
-                Write-Host "Searched: $releaseDir\*.exe"
-                exit 1
-              }
-              $exePath = $exeFallback.FullName
-              Write-Warning "Expected exe not found; fallback to newest: $exePath"
-            } else {
-              $exePath = $expectedExe
+            if (-not (Test-Path $releaseDir)) {
+              throw "Release directory not found: $releaseDir"
             }
 
-            # --- Package as ZIP: unzip to run ---
+            # EXE selection (two-layer protection):
+            # - First: pick an exe whose name contains app.name or app.title, and was written after the build started
+            # - Fallback: pick the newest exe written after the build started
+            $exeCandidatesAll = Get-ChildItem -Path $releaseDir -Filter "*.exe" -ErrorAction SilentlyContinue |
+              Where-Object { $_.LastWriteTime -ge $before.AddSeconds(-10) } |
+              Sort-Object LastWriteTime -Descending
+
+            $k1 = $app.name.ToLower()
+            $k2 = $app.title.ToLower()
+
+            $exe = $exeCandidatesAll |
+              Where-Object {
+                $n = $_.Name.ToLower()
+                ($n -like "*$k1*") -or ($n -like "*$k2*")
+              } |
+              Select-Object -First 1
+
+            if (-not $exe) { $exe = $exeCandidatesAll | Select-Object -First 1 }
+
+            if (-not $exe) {
+              Write-Host "EXEs under $releaseDir:"
+              Get-ChildItem -Path $releaseDir -Filter "*.exe" -ErrorAction SilentlyContinue |
+                Sort-Object LastWriteTime -Descending |
+                Select-Object -First 30 |
+                Format-Table -AutoSize
+              throw "No EXE found for $($app.title). releaseDir=$releaseDir"
+            }
+
+            # Package as ZIP: unzip to run
             $tmpDir = Join-Path $env:RUNNER_TEMP "pake_portable_$($app.title)"
             if (Test-Path $tmpDir) { Remove-Item -Recurse -Force $tmpDir }
             New-Item -ItemType Directory -Path $tmpDir | Out-Null
 
-            Copy-Item $exePath -Destination (Join-Path $tmpDir "$($app.title).exe") -Force
+            Copy-Item $exe.FullName -Destination (Join-Path $tmpDir "$($app.title).exe") -Force
             Compress-Archive -Path (Join-Path $tmpDir "*") -DestinationPath $zipPath -Force
 
-            # 保持仓库干净（如果 cli 会改 lock）
+            # Keep repo clean (if tooling changes lockfiles)
             git restore --worktree --staged src-tauri/Cargo.lock 2>$null | Out-Null
 
-            Write-Host "Done: $zipPath (from $exePath)"
+            Write-Host "Done: $zipPath (from $($exe.FullName))"
           }
 
-      # ✅ 输出 sccache 命中率（setup-env 已经装好并启用）
       - name: sccache stats
         shell: pwsh
         run: |
