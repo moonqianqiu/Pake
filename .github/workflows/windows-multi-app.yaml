@@ -2,10 +2,17 @@ name: Build Multi Apps (Windows Only)
 
 env:
   NODE_VERSION: "22"
-  PNPM_VERSION: "10.26.2"
+  PNPM_VERSION: "10"
 
 on:
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-multi-app-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -13,60 +20,52 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 180
 
+    # sccache：对所有步骤生效
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
+      SCCACHE_CACHE_SIZE: "2G"
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Setup Node.js (with pnpm cache)
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: "**/pnpm-lock.yaml"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable-x86_64-msvc
 
+      - name: Setup sccache
+        uses: mozilla/sccache-action@v0.0.6
+
+      - name: Rust cache (cargo + target)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri -> target
+          shared-key: tauri-windows
+
       - name: Setup Node.js Environment
         uses: ./.github/actions/setup-env
         with:
           mode: build
 
-      # --- Cache: PNPM store path (must run after pnpm exists) ---
-      - name: Get pnpm store path
-        id: pnpm_store
-        shell: pwsh
-        run: |
-          $p = pnpm store path
-          "PNPM_STORE_PATH=$p" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          Write-Host "PNPM_STORE_PATH=$p"
-
-      - name: Cache pnpm store
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.PNPM_STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-
-
-      # --- Cache: Rust/Cargo + Tauri target ---
-      - name: Cache cargo & tauri target
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ env.CARGO_HOME }}\bin
-            ${{ env.CARGO_HOME }}\registry\index
-            ${{ env.CARGO_HOME }}\registry\cache
-            ${{ env.CARGO_HOME }}\git\db
-            src-tauri\target
-          key: ${{ runner.os }}-cargo-tauri-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-tauri-
-
       - name: Build CLI (once)
-        shell: bash
+        shell: pwsh
         run: pnpm run cli:build
 
       - name: Verify CLI
-        shell: bash
+        shell: pwsh
         run: |
-          ls -la dist || true
-          test -f dist/cli.js
+          if (Test-Path dist) { Get-ChildItem dist -Force | Format-Table -AutoSize }
+          if (-not (Test-Path "dist/cli.js")) { throw "dist/cli.js not found" }
 
       - name: Build Apps (Windows, Serial) -> ZIP portable
         shell: pwsh
@@ -83,17 +82,30 @@ jobs:
 
           New-Item -Path "output\windows" -ItemType Directory -Force | Out-Null
 
+          # ✅ “独立但可复用”策略：
+          # - Rust 编译复用：所有 app 共用同一个 CARGO_TARGET_DIR（在 src-tauri\target 下，能被 rust-cache 缓存）
+          # - 产物独立：每轮只清理 bundle/installer 等容易串味的输出目录；exe 按 name 精确定位，不再“找最新”
+          $tauriTargetRoot = Resolve-Path "src-tauri\target"
+          $sharedTargetDir = Join-Path $tauriTargetRoot "shared"
+          New-Item -ItemType Directory -Path $sharedTargetDir -Force | Out-Null
+          $env:CARGO_TARGET_DIR = $sharedTargetDir
+
           foreach ($app in $apps) {
             Write-Host "`n=============================="
             Write-Host "Building: $($app.title)"
             Write-Host "=============================="
 
-            # 清理根目录遗留 exe/msi/zip，避免混淆
-            Get-ChildItem -Path "." -Filter "*.msi" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
-            Get-ChildItem -Path "." -Filter "*.exe" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
-
             $zipPath = "output\windows\$($app.title)_x64.zip"
             if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
+
+            # ✅ 只清理“可能串味”的 bundle/installer 输出（不碰根目录、不全删 target）
+            $releaseDir = Join-Path $sharedTargetDir "release"
+            $bundleDir  = Join-Path $releaseDir "bundle"
+            if (Test-Path $bundleDir) { Remove-Item -Recurse -Force $bundleDir -ErrorAction SilentlyContinue }
+
+            # 有些 tauri 工具链会在 release 根下留下安装包/签名文件，按需清理
+            Get-ChildItem -Path $releaseDir -Filter "*.msi" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+            Get-ChildItem -Path $releaseDir -Filter "*.exe" -ErrorAction SilentlyContinue | Out-Null  # 不删除 exe（复用 + 可并存），靠精准定位取正确的
 
             $args = @(
               $app.url,
@@ -108,26 +120,24 @@ jobs:
             node dist/cli.js $args
             if ($LASTEXITCODE -ne 0) { throw "Build failed for $($app.title)" }
 
-            # --- Find EXE (portable) ---
-            $exeCandidates = @()
-            $exeCandidates += Get-ChildItem -Path "src-tauri\target\x86_64-pc-windows-msvc\release\*.exe" -ErrorAction SilentlyContinue
-            $exeCandidates += Get-ChildItem -Path "src-tauri\target\release\*.exe" -ErrorAction SilentlyContinue
-            $exeCandidates += Get-ChildItem -Path "." -Filter "*.exe" -ErrorAction SilentlyContinue
+            # ✅ 精准取 exe：共享 target 下的 release\<name>.exe
+            $expectedExe = Join-Path $releaseDir "$($app.name).exe"
+            if (-not (Test-Path $expectedExe)) {
+              # 兜底：如果 name 不是最终二进制名，则在 release 下找“本轮最新 exe”，但不跨目录
+              $exeFallback = Get-ChildItem -Path $releaseDir -Filter "*.exe" -ErrorAction SilentlyContinue |
+                Sort-Object LastWriteTime -Descending |
+                Select-Object -First 1
 
-            # 优先找同名 exe
-            $exe = $exeCandidates | Where-Object { $_.Name -ieq "$($app.name).exe" } | Select-Object -First 1
-            if (-not $exe) {
-              # 兜底：取最新 exe
-              $exe = $exeCandidates | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-            }
-
-            if (-not $exe) {
-              Write-Error "No EXE found for $($app.title)"
-              Write-Host "Searched exe locations:"
-              Write-Host "  - src-tauri\target\x86_64-pc-windows-msvc\release\"
-              Write-Host "  - src-tauri\target\release\"
-              Write-Host "  - project root"
-              exit 1
+              if (-not $exeFallback) {
+                Write-Error "No EXE found for $($app.title)"
+                Write-Host "Expected: $expectedExe"
+                Write-Host "Searched: $releaseDir\*.exe"
+                exit 1
+              }
+              $exePath = $exeFallback.FullName
+              Write-Warning "Expected exe not found; fallback to newest: $exePath"
+            } else {
+              $exePath = $expectedExe
             }
 
             # --- Package as ZIP: unzip to run ---
@@ -135,18 +145,23 @@ jobs:
             if (Test-Path $tmpDir) { Remove-Item -Recurse -Force $tmpDir }
             New-Item -ItemType Directory -Path $tmpDir | Out-Null
 
-            # 让 zip 里 exe 名字统一成 Title.exe（你也可以改回 name.exe）
-            Copy-Item $exe.FullName -Destination (Join-Path $tmpDir "$($app.title).exe") -Force
-
+            Copy-Item $exePath -Destination (Join-Path $tmpDir "$($app.title).exe") -Force
             Compress-Archive -Path (Join-Path $tmpDir "*") -DestinationPath $zipPath -Force
 
-            git checkout -- src-tauri/Cargo.lock | Out-Null
-            Write-Host "Done: $zipPath (from $($exe.FullName))"
+            git restore --worktree --staged src-tauri/Cargo.lock 2>$null | Out-Null
+
+            Write-Host "Done: $zipPath (from $exePath)"
           }
+
+      - name: sccache stats
+        shell: pwsh
+        run: |
+          sccache --show-stats
+          sccache --version
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: windows-5-apps
+          name: windows-5-apps-${{ github.run_number }}-${{ github.sha }}
           path: output/windows/*.zip
           retention-days: 3
