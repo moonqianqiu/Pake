@@ -94,7 +94,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "Build failed for $($app.title)" }
 
             if (-not (Test-Path $releaseDir)) {
-              throw "Release directory not found: $releaseDir"
+              throw "Release directory not found: ${releaseDir}"
             }
 
             # EXE selection (two-layer protection):
@@ -117,12 +117,12 @@ jobs:
             if (-not $exe) { $exe = $exeCandidatesAll | Select-Object -First 1 }
 
             if (-not $exe) {
-              Write-Host "EXEs under $releaseDir:"
+              Write-Host "EXEs under ${releaseDir}:"
               Get-ChildItem -Path $releaseDir -Filter "*.exe" -ErrorAction SilentlyContinue |
                 Sort-Object LastWriteTime -Descending |
                 Select-Object -First 30 |
                 Format-Table -AutoSize
-              throw "No EXE found for $($app.title). releaseDir=$releaseDir"
+              throw "No EXE found for $($app.title). releaseDir=${releaseDir}"
             }
 
             # Package as ZIP: unzip to run
