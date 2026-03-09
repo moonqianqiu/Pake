@@ -60,7 +60,7 @@ pake [url] [options]
 
 The packaged application will be located in the current working directory by default. The first packaging might take some time due to environment configuration. Please be patient.
 
-> **macOS Output**: On macOS, Pake creates DMG installers by default. To create `.app` bundles for testing (to avoid user interaction), set the environment variable `PAKE_CREATE_APP=1`.
+> **macOS Output**: On macOS, Pake creates DMG installers by default. To create `.app` bundles for testing (to avoid user interaction), set the environment variable `PAKE_CREATE_APP=1`. If you want Pake to install the app directly into `/Applications`, use `--install`, which builds an `.app`, copies it into `/Applications`, and removes the local bundle after a successful install.
 >
 > **Note**: Packaging requires the Rust environment. If Rust is not installed, you will be prompted for installation confirmation. In case of installation failure or timeout, you can [install it manually](https://www.rust-lang.org/tools/install).
 
@@ -423,6 +423,19 @@ Turn on rapid build mode (app only, no dmg/deb/msi), good for debugging. Default
 --iterative-build
 ```
 
+#### [install]
+
+Install the built macOS app directly into `/Applications`. Default is `false`.
+
+This option is macOS-only and is intended for local development or quick testing. When enabled, Pake builds an `.app` bundle, copies it into `/Applications`, replaces any existing app with the same name, and removes the local bundle after a successful install. If the install fails, the local `.app` is kept in the current working directory.
+
+```shell
+--install
+
+# Example: Build and install directly to /Applications
+pake https://github.com --name GitHub --install
+```
+
 #### [multi-instance]
 
 Allow the packaged app to run more than one instance at the same time. Default is `false`, which means launching a second instance simply focuses the existing window. Enable this when you need to open several windows of the same app simultaneously.
@@ -454,7 +467,7 @@ pake https://chat.example.com --name ChatApp --multi-window
 
 #### [installer-language]
 
-Set the Windows Installer language. Options include `zh-CN`, `ja-JP`, More at [Tauri Document](https://tauri.app/distribute/windows-installer/#internationalization). Default is `en-US`.
+Set the Windows Installer language. Options include `zh-CN`, `ja-JP`, More at [Tauri docs](https://v2.tauri.app/distribute/windows-installer/#internationalization). Default is `en-US`.
 
 ```shell
 --installer-language <language>
