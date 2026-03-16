@@ -22,6 +22,12 @@ ${green('|_|   \\__,_|_|\\_\\___|  can turn any webpage into a desktop app with 
     .showHelpAfterError()
     .argument('[url]', 'The web URL you want to package', validateUrlInput)
     .option('--name <string>', 'Application name')
+    .addOption(
+      new Option(
+        '--identifier <string>',
+        'Application identifier / bundle ID',
+      ).hideHelp(),
+    )
     .option('--icon <string>', 'Application icon', DEFAULT.icon)
     .option(
       '--width <number>',
@@ -238,7 +244,10 @@ ${green('|_|   \\__,_|_|\\_\\___|  can turn any webpage into a desktop app with 
         .hideHelp(),
     )
     .addOption(
-      new Option('--new-window', 'Allow new window for third-party login')
+      new Option(
+        '--new-window',
+        'Allow sites to open new windows (for auth flows, tabs, branches)',
+      )
         .default(DEFAULT.newWindow)
         .hideHelp(),
     )
@@ -246,6 +255,16 @@ ${green('|_|   \\__,_|_|\\_\\___|  can turn any webpage into a desktop app with 
       '--install',
       'Auto-install app to /Applications (macOS) after build and remove local bundle',
       DEFAULT.install,
+    )
+    .addOption(
+      new Option('--camera', 'Request camera permission on macOS')
+        .default(DEFAULT.camera)
+        .hideHelp(),
+    )
+    .addOption(
+      new Option('--microphone', 'Request microphone permission on macOS')
+        .default(DEFAULT.microphone)
+        .hideHelp(),
     )
     .version(packageJson.version, '-v, --version')
     .configureHelp({

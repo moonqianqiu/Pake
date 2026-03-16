@@ -6,6 +6,9 @@ export interface PakeCliOptions {
   // Application name
   name?: string;
 
+  // Explicit app identifier / bundle id
+  identifier?: string;
+
   // Window title (supports Chinese characters)
   title?: string;
 
@@ -121,11 +124,17 @@ export interface PakeCliOptions {
   // Turn on rapid build mode (app only, no dmg/deb/msi), good for debugging
   iterativeBuild: boolean;
 
-  // Allow new window for third-party login, default false
+  // Allow sites to open new windows, default false
   newWindow: boolean;
 
   // Auto-install app to /Applications (macOS) after build, default false
   install: boolean;
+
+  // Request camera entitlement on macOS, default false
+  camera: boolean;
+
+  // Request microphone entitlement on macOS, default false
+  microphone: boolean;
 }
 
 export interface PakeAppOptions extends PakeCliOptions {

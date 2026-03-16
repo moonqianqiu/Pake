@@ -124,6 +124,39 @@ pake ./my-app/index.html --name my-static-app --use-local-file
 
 Requirements: Pake CLI >= 3.0.0
 
+## macOS Media Permissions
+
+By default, apps built with Pake do not request camera or microphone access. For sites that require these (for example, video conferencing or voice input), pass the relevant flags at build time:
+
+```bash
+pake https://chatgpt.com --name ChatGPT --microphone
+pake https://meet.google.com --name GoogleMeet --camera --microphone
+```
+
+- `--microphone` — grants microphone access (`com.apple.security.device.audio-input`)
+- `--camera` — grants camera access (`com.apple.security.device.camera`)
+
+macOS will prompt the user for permission on first use. Only add these flags for sites that actually need them.
+
+## Multiple Apps For The Same Site
+
+If you need separate apps for the same site, for example two Gmail accounts with different login state, build them with different app names:
+
+```bash
+pake https://gmail.com --name "Gmail Work"
+pake https://gmail.com --name "Gmail Personal"
+```
+
+Pake now generates a different app identifier for each `URL + name` pair, so these apps can be installed as separate desktop apps instead of resolving to the same app.
+
+For advanced cases, Pake also supports a hidden `--identifier` option if you need to pin the bundle identifier explicitly:
+
+```bash
+pake https://gmail.com --name "Gmail Work" --identifier com.example.gmail.work
+```
+
+`--multi-instance` is different. It only allows multiple processes for the same packaged app, it does not create separate app identities.
+
 ## Project Structure
 
 Understanding Pake's codebase structure will help you navigate and contribute effectively:

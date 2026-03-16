@@ -124,6 +124,39 @@ pake ./my-app/index.html --name my-static-app --use-local-file
 
 要求：Pake CLI >= 3.0.0
 
+## macOS 摄像头与麦克风权限
+
+Pake 构建的应用默认不申请摄像头或麦克风权限。对于需要这些权限的站点（例如视频会议或语音输入），在构建时传入对应的标志：
+
+```bash
+pake https://chatgpt.com --name ChatGPT --microphone
+pake https://meet.google.com --name GoogleMeet --camera --microphone
+```
+
+- `--microphone` — 申请麦克风权限（`com.apple.security.device.audio-input`）
+- `--camera` — 申请摄像头权限（`com.apple.security.device.camera`）
+
+macOS 会在首次使用时向用户弹出权限确认对话框。请仅在确实需要的站点上添加这些标志。
+
+## 同一站点生成多个独立应用
+
+如果你需要为同一个站点生成多个彼此独立的应用，例如两个不同登录态的 Gmail，可以直接使用不同的应用名称进行构建：
+
+```bash
+pake https://gmail.com --name "Gmail Work"
+pake https://gmail.com --name "Gmail Personal"
+```
+
+Pake 现在会基于 `URL + name` 生成不同的应用标识，因此这两个应用会被当作两个独立桌面应用安装，而不是落到同一个应用上。
+
+对于需要固定 bundle identifier 的高级场景，Pake 也支持一个隐藏参数 `--identifier`：
+
+```bash
+pake https://gmail.com --name "Gmail Work" --identifier com.example.gmail.work
+```
+
+`--multi-instance` 和这个能力不同，它只是允许同一个已打包应用启动多个进程，并不会创建多个独立应用身份。
+
 ## 项目结构
 
 了解 Pake 的代码库结构将帮助您有效地进行导航和贡献：
