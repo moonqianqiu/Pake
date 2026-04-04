@@ -55,7 +55,7 @@ jobs:
           New-Item -Path "output\windows" -ItemType Directory -Force | Out-Null
 
           # Keep default target path (some tooling assumes the default)
-          $tauriTargetRoot = Resolve-Path "src-tauri\target"
+          $tauriTargetRoot = Join-Path (Get-Location) "src-tauri\target"
           $triple = "x86_64-pc-windows-msvc"
 
           foreach ($app in $apps) {
