@@ -1,6 +1,6 @@
 {
   "name": "pake-cli",
-  "version": "3.11.2",
+  "version": "3.11.3",
   "description": "🤱🏻 Turn any webpage into a desktop app with one command. 🤱🏻 一键打包网页生成轻量桌面应用。",
   "engines": {
     "node": ">=18.0.0"
@@ -73,7 +73,6 @@
     "@rollup/plugin-terser": "^0.4.4",
     "@types/fs-extra": "^11.0.4",
     "@types/node": "^25.3.2",
-    "@types/page-icon": "^0.3.6",
     "@types/prompts": "^2.4.9",
     "@types/tmp": "^0.2.6",
     "@types/update-notifier": "^6.0.8",
@@ -88,7 +87,8 @@
   },
   "pnpm": {
     "overrides": {
-      "sharp": "^0.34.5"
+      "sharp": "^0.34.5",
+      "@img/sharp-libvips-darwin-arm64": "1.2.4"
     },
     "onlyBuiltDependencies": [
       "esbuild",

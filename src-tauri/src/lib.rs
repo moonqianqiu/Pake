@@ -27,6 +27,9 @@ pub fn run_app() {
         if std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
             std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
         }
+        if std::env::var("WEBKIT_DISABLE_COMPOSITING_MODE").is_err() {
+            std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+        }
     }
 
     let (pake_config, tauri_config) = get_pake_config();
@@ -107,9 +110,8 @@ pub fn run_app() {
                 &pake_config.system_tray_path,
                 init_fullscreen,
                 multi_window,
-            )
-            .unwrap();
-            set_global_shortcut(app.app_handle(), activation_shortcut, init_fullscreen).unwrap();
+            )?;
+            set_global_shortcut(app.app_handle(), activation_shortcut, init_fullscreen)?;
 
             // Show window after state restoration to prevent position flashing
             // Unless start_to_tray is enabled, then keep it hidden
@@ -117,13 +119,13 @@ pub fn run_app() {
                 let window_clone = window.clone();
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(tokio::time::Duration::from_millis(WINDOW_SHOW_DELAY)).await;
-                    window_clone.show().unwrap();
+                    let _ = window_clone.show();
 
                     // Fixed: Linux fullscreen issue with virtual keyboard
                     #[cfg(target_os = "linux")]
                     {
                         if init_fullscreen {
-                            window_clone.set_fullscreen(true).unwrap();
+                            let _ = window_clone.set_fullscreen(true);
                             // Ensure webview maintains focus for input after fullscreen
                             let _ = window_clone.set_focus();
                         } else {
@@ -148,22 +150,22 @@ pub fn run_app() {
                         #[cfg(target_os = "macos")]
                         {
                             if window.is_fullscreen().unwrap_or(false) {
-                                window.set_fullscreen(false).unwrap();
+                                let _ = window.set_fullscreen(false);
                                 tokio::time::sleep(Duration::from_millis(900)).await;
                             }
                         }
                         #[cfg(target_os = "linux")]
                         {
                             if window.is_fullscreen().unwrap_or(false) {
-                                window.set_fullscreen(false).unwrap();
+                                let _ = window.set_fullscreen(false);
                                 // Restore focus after exiting fullscreen to fix input issues
                                 let _ = window.set_focus();
                             }
                         }
                         // On macOS, directly hide without minimize to avoid duplicate Dock icons
                         #[cfg(not(target_os = "macos"))]
-                        window.minimize().unwrap();
-                        window.hide().unwrap();
+                        let _ = window.minimize();
+                        let _ = window.hide();
                     });
                     api.prevent_close();
                 }

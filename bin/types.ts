@@ -1,6 +1,5 @@
-export interface PlatformMap {
-  [key: string]: any;
-}
+export type SupportedPlatform = 'win32' | 'darwin' | 'linux';
+export type TauriPlatform = 'windows' | 'macos' | 'linux';
 
 export interface PakeCliOptions {
   // Application name
@@ -183,4 +182,35 @@ export interface PakeConfig {
   proxy_url: string;
   multi_instance: boolean;
   multi_window: boolean;
+  inject?: string[];
+}
+
+export interface PakeTauriConfig {
+  productName?: string;
+  identifier?: string;
+  version?: string;
+  mainBinaryName?: string;
+  pake: PakeConfig;
+  bundle: {
+    icon?: string[];
+    resources?: string[];
+    targets?: string[];
+    linux?: {
+      deb: { files?: Record<string, string> };
+      rpm?: { files?: Record<string, string> };
+      [key: string]: unknown;
+    };
+    windows?: {
+      wix: { language: string[] };
+      [key: string]: unknown;
+    };
+    [key: string]: unknown;
+  };
+  app: {
+    security?: { headers?: Record<string, string> };
+    trayIcon?: unknown;
+    [key: string]: unknown;
+  };
+  build?: unknown;
+  [key: string]: unknown;
 }
