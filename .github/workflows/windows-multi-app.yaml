@@ -45,7 +45,7 @@ jobs:
         run: |
           $apps = @(
             # @{ title="DouBao";      name="DouBao";      url="https://www.doubao.com/chat";    icon="https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/doubao_128.ico" },
-            # @{ title="Kimi";        name="Kimi";        url="https://www.kimi.com";            icon="https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/kimi_128.ico" },
+            @{ title="Kimi";        name="Kimi";        url="https://www.kimi.com";            icon="https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/kimi_128.ico" },
             @{ title="Qwen";        name="Qwen";        url="https://chat.qwen.ai";            icon="https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/qwen_128.ico" },
             @{ title="Z";           name="Z";           url="https://chat.z.ai";               icon="https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/z_128.ico" },
             @{ title="Minimax";     name="Minimax";     url="https://agent.minimaxi.com";      icon="https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/minimax_128.ico" },
