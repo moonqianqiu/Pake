@@ -13,7 +13,8 @@ const WINDOW_SHOW_DELAY: u64 = 50;
 
 use app::{
     invoke::{
-        clear_cache_and_restart, download_file, download_file_by_binary, send_notification,
+        clear_cache_and_restart, clear_dock_badge, download_file, download_file_by_binary,
+        increment_dock_badge, send_notification, set_dock_badge, set_dock_badge_label,
         update_theme_mode,
     },
     setup::{set_global_shortcut, set_system_tray},
@@ -42,6 +43,7 @@ pub fn run_app() {
     let start_to_tray = pake_config.windows[0].start_to_tray && show_system_tray; // Only valid when tray is enabled
     let multi_instance = pake_config.multi_instance;
     let multi_window = pake_config.multi_window;
+    let enable_find = pake_config.windows[0].enable_find;
 
     let window_state_plugin = WindowStatePlugin::default()
         .with_state_flags(if init_fullscreen {
@@ -81,6 +83,10 @@ pub fn run_app() {
             download_file,
             download_file_by_binary,
             send_notification,
+            increment_dock_badge,
+            set_dock_badge,
+            set_dock_badge_label,
+            clear_dock_badge,
             update_theme_mode,
             clear_cache_and_restart,
         ])
@@ -93,8 +99,7 @@ pub fn run_app() {
             // --- Menu Construction Start ---
             #[cfg(target_os = "macos")]
             {
-                let menu = app::menu::get_menu(app.app_handle(), multi_window)?;
-                app.set_menu(menu)?;
+                app::menu::set_app_menu(app.app_handle(), multi_window, enable_find)?;
 
                 // Event Handling for Custom Menu Item
                 app.on_menu_event(move |app_handle, event| {
@@ -103,7 +108,7 @@ pub fn run_app() {
             }
             // --- Menu Construction End ---
 
-            let window = set_window(app.app_handle(), &pake_config, &tauri_config);
+            let window = set_window(app.app_handle(), &pake_config, &tauri_config)?;
             set_system_tray(
                 app.app_handle(),
                 show_system_tray,
@@ -174,7 +179,10 @@ pub fn run_app() {
             }
         })
         .build(tauri::generate_context!())
-        .expect("error while building tauri application")
+        .unwrap_or_else(|error| {
+            eprintln!("[Pake] Fatal error while building Tauri application: {error}");
+            std::process::exit(1);
+        })
         .run(|_app, _event| {
             // Handle macOS dock icon click to reopen hidden window
             #[cfg(target_os = "macos")]

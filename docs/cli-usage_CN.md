@@ -228,6 +228,14 @@ pake https://github.com --name GitHub
 --disabled-web-shortcuts
 ```
 
+#### [enable-find]
+
+启用 Pake 内置的页面查找浮层，默认 `false`。开启后用户可以使用 `Cmd/Ctrl+F` 打开查找，`Cmd/Ctrl+G` 跳到下一个匹配项，`Cmd/Ctrl+Shift+G` 跳到上一个匹配项。
+
+```shell
+--enable-find
+```
+
 #### [force-internal-navigation]
 
 启用后所有点击的链接（即使是跨域）都会在 Pake 窗口内打开，不会再调用外部浏览器或辅助程序。默认 `false`。

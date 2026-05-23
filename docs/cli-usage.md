@@ -230,6 +230,14 @@ Sets whether to disable web shortcuts in the original Pake container, defaults t
 --disabled-web-shortcuts
 ```
 
+#### [enable-find]
+
+Enable Pake's in-page Find UI. Default is `false`. When enabled, users can press `Cmd/Ctrl+F` to open Find, `Cmd/Ctrl+G` to jump to the next match, and `Cmd/Ctrl+Shift+G` to jump to the previous match.
+
+```shell
+--enable-find
+```
+
 #### [force-internal-navigation]
 
 Keeps every clicked link (even pointing to other domains) inside the Pake window instead of letting the OS open an external browser or helper. Default is `false`.

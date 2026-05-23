@@ -1,6 +1,6 @@
 [package]
 name = "pake"
-version = "3.11.3"
+version = "3.11.6"
 description = "🤱🏻 Turn any webpage into a desktop app with Rust."
 authors = ["Tw93"]
 license = "MIT"
@@ -35,6 +35,11 @@ tauri-plugin-shell = { version = "2.3.5" }
 tauri-plugin-opener = { version = "2.5.3" }
 tauri-plugin-single-instance = "2.4.0"
 tauri-plugin-notification = "2.3.3"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSDockTile"] }
+objc2-foundation = { version = "0.3", features = ["NSString"] }
 
 [features]
 # this feature is used for development builds from development cli

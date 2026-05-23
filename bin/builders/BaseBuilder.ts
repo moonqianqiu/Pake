@@ -14,92 +14,24 @@ import {
 import { npmDirectory } from '@/utils/dir';
 import { getSpinner } from '@/utils/info';
 import { shellExec } from '@/utils/shell';
-import { isChinaDomain } from '@/utils/ip';
+import { CN_MIRROR_ENV, isCnMirrorEnabled } from '@/utils/mirror';
 import { IS_MAC } from '@/utils/platform';
 import logger from '@/options/logger';
+import {
+  configureCargoRegistry,
+  detectPackageManager,
+  getBuildEnvironment,
+  getBuildTimeout,
+  getInstallCommand,
+  getInstallTimeout,
+  isLinuxDeployStripError,
+} from './env';
 
 export default abstract class BaseBuilder {
   protected options: PakeAppOptions;
-  private static packageManagerCache: string | null = null;
 
   protected constructor(options: PakeAppOptions) {
     this.options = options;
-  }
-
-  private getBuildEnvironment() {
-    if (!IS_MAC) {
-      return undefined;
-    }
-
-    const currentPath = process.env.PATH || '';
-    const systemToolsPath = '/usr/bin';
-    const buildPath = currentPath.startsWith(`${systemToolsPath}:`)
-      ? currentPath
-      : `${systemToolsPath}:${currentPath}`;
-
-    return {
-      CFLAGS: '-fno-modules',
-      CXXFLAGS: '-fno-modules',
-      MACOSX_DEPLOYMENT_TARGET: '14.0',
-      PATH: buildPath,
-    };
-  }
-
-  private getInstallTimeout(): number {
-    // Windows needs more time due to native compilation and antivirus scanning
-    return process.platform === 'win32' ? 900000 : 600000;
-  }
-
-  private getBuildTimeout(): number {
-    return 900000;
-  }
-
-  private async detectPackageManager(): Promise<string> {
-    if (BaseBuilder.packageManagerCache) {
-      return BaseBuilder.packageManagerCache;
-    }
-
-    const { execa } = await import('execa');
-
-    try {
-      await execa('pnpm', ['--version'], { stdio: 'ignore' });
-      logger.info('✺ Using pnpm for package management.');
-      BaseBuilder.packageManagerCache = 'pnpm';
-      return 'pnpm';
-    } catch {
-      try {
-        await execa('npm', ['--version'], { stdio: 'ignore' });
-        logger.info('✺ pnpm not available, using npm for package management.');
-        BaseBuilder.packageManagerCache = 'npm';
-        return 'npm';
-      } catch {
-        throw new Error(
-          'Neither pnpm nor npm is available. Please install a package manager.',
-        );
-      }
-    }
-  }
-
-  private async copyFileWithSamePathGuard(
-    sourcePath: string,
-    destinationPath: string,
-  ): Promise<void> {
-    if (path.resolve(sourcePath) === path.resolve(destinationPath)) {
-      return;
-    }
-
-    try {
-      await fsExtra.copy(sourcePath, destinationPath, { overwrite: true });
-    } catch (error) {
-      if (
-        error instanceof Error &&
-        error.message.includes('Source and destination must not be the same')
-      ) {
-        return;
-      }
-
-      throw error;
-    }
   }
 
   async prepare() {
@@ -129,20 +61,13 @@ export default abstract class BaseBuilder {
       }
     }
 
-    const isChina = await isChinaDomain('www.npmjs.com');
     const spinner = getSpinner('Installing package...');
-    const rustProjectDir = path.join(tauriSrcPath, '.cargo');
-    const projectConf = path.join(rustProjectDir, 'config.toml');
-    await fsExtra.ensureDir(rustProjectDir);
+    const useCnMirror = isCnMirrorEnabled();
+    await configureCargoRegistry(tauriSrcPath, useCnMirror);
 
-    // Detect available package manager
-    const packageManager = await this.detectPackageManager();
-    const registryOption = ' --registry=https://registry.npmmirror.com';
-    const peerDepsOption =
-      packageManager === 'npm' ? ' --legacy-peer-deps' : '';
-
-    const timeout = this.getInstallTimeout();
-    const buildEnv = this.getBuildEnvironment();
+    const packageManager = await detectPackageManager();
+    const timeout = getInstallTimeout();
+    const buildEnv = getBuildEnvironment();
 
     // Show helpful message for first-time users
     if (!tauriTargetPathExists) {
@@ -153,64 +78,26 @@ export default abstract class BaseBuilder {
       );
     }
 
-    let usedMirror = isChina;
+    if (useCnMirror) {
+      logger.info(
+        `✺ ${CN_MIRROR_ENV}=1 detected, using ${packageManager}/rsProxy CN mirror.`,
+      );
+    }
 
     try {
-      if (isChina) {
-        logger.info(
-          `✺ Located in China, using ${packageManager}/rsProxy CN mirror.`,
-        );
-        const projectCnConf = path.join(tauriSrcPath, 'rust_proxy.toml');
-        await this.copyFileWithSamePathGuard(projectCnConf, projectConf);
-        await shellExec(
-          `cd "${npmDirectory}" && ${packageManager} install${registryOption}${peerDepsOption}`,
-          timeout,
-          { ...buildEnv, CI: 'true' },
-        );
-      } else {
-        await shellExec(
-          `cd "${npmDirectory}" && ${packageManager} install${peerDepsOption}`,
-          timeout,
-          { ...buildEnv, CI: 'true' },
-        );
-      }
+      await shellExec(getInstallCommand(packageManager, useCnMirror), timeout, {
+        ...buildEnv,
+        CI: 'true',
+      });
       spinner.succeed(chalk.green('Package installed!'));
-    } catch (error: unknown) {
-      // If installation times out and we haven't tried the mirror yet, retry with mirror
-      if (
-        error instanceof Error &&
-        error.message.includes('timed out') &&
-        !usedMirror
-      ) {
-        spinner.fail(
-          chalk.yellow('Installation timed out, retrying with CN mirror...'),
-        );
+    } catch (error) {
+      spinner.fail(chalk.red('Installation failed'));
+      if (!useCnMirror) {
         logger.info(
-          '✺ Retrying installation with CN mirror for better speed...',
+          `✺ If downloads are slow in China, retry with ${CN_MIRROR_ENV}=1 to use CN mirrors.`,
         );
-
-        const retrySpinner = getSpinner('Retrying installation...');
-        usedMirror = true;
-
-        try {
-          const projectCnConf = path.join(tauriSrcPath, 'rust_proxy.toml');
-          await this.copyFileWithSamePathGuard(projectCnConf, projectConf);
-          await shellExec(
-            `cd "${npmDirectory}" && ${packageManager} install${registryOption}${peerDepsOption}`,
-            timeout,
-            { ...buildEnv, CI: 'true' },
-          );
-          retrySpinner.succeed(
-            chalk.green('Package installed with CN mirror!'),
-          );
-        } catch (retryError) {
-          retrySpinner.fail(chalk.red('Installation failed'));
-          throw retryError;
-        }
-      } else {
-        spinner.fail(chalk.red('Installation failed'));
-        throw error;
       }
+      throw error;
     }
 
     if (!tauriTargetPathExists) {
@@ -228,7 +115,7 @@ export default abstract class BaseBuilder {
     logger.info('Pake dev server starting...');
     await mergeConfig(url, this.options, tauriConfig);
 
-    const packageManager = await this.detectPackageManager();
+    const packageManager = await detectPackageManager();
     const configPath = path.join(
       npmDirectory,
       'src-tauri',
@@ -250,8 +137,7 @@ export default abstract class BaseBuilder {
     const { name = 'pake-app' } = this.options;
     await mergeConfig(url, this.options, tauriConfig);
 
-    // Detect available package manager
-    const packageManager = await this.detectPackageManager();
+    const packageManager = await detectPackageManager();
 
     // Build app
     const buildSpinner = getSpinner('Building app...');
@@ -261,7 +147,7 @@ export default abstract class BaseBuilder {
     // Show static message to keep the status visible
     logger.warn('✸ Building app...');
 
-    const baseEnv = this.getBuildEnvironment();
+    const baseEnv = getBuildEnvironment();
     let buildEnv: Record<string, string> = {
       ...(baseEnv ?? {}),
       ...(process.env.NO_STRIP ? { NO_STRIP: process.env.NO_STRIP } : {}),
@@ -285,7 +171,7 @@ export default abstract class BaseBuilder {
     }
 
     const buildCommand = `cd "${npmDirectory}" && ${this.getBuildCommand(packageManager)}`;
-    const buildTimeout = this.getBuildTimeout();
+    const buildTimeout = getBuildTimeout();
 
     try {
       await shellExec(buildCommand, buildTimeout, resolveExecEnv());
@@ -294,7 +180,7 @@ export default abstract class BaseBuilder {
         process.platform === 'linux' &&
         target === 'appimage' &&
         !buildEnv.NO_STRIP &&
-        this.isLinuxDeployStripError(error);
+        isLinuxDeployStripError(error);
 
       if (shouldRetryWithoutStrip) {
         logger.warn(
@@ -371,21 +257,6 @@ export default abstract class BaseBuilder {
   }
 
   abstract getFileName(): string;
-
-  private isLinuxDeployStripError(error: unknown): boolean {
-    if (!(error instanceof Error) || !error.message) {
-      return false;
-    }
-    const message = error.message.toLowerCase();
-    return (
-      message.includes('linuxdeploy') ||
-      message.includes('failed to run linuxdeploy') ||
-      message.includes('strip:') ||
-      message.includes('unable to recognise the format of the input file') ||
-      message.includes('appimage tool failed') ||
-      message.includes('strip tool')
-    );
-  }
 
   protected static readonly ARCH_MAPPINGS: Record<
     string,

@@ -50,8 +50,12 @@ impl MultiWindowState {
     }
 }
 
-pub fn set_window(app: &AppHandle, config: &PakeConfig, tauri_config: &Config) -> WebviewWindow {
-    build_window_with_label(app, config, tauri_config, "pake").expect("Failed to build window")
+pub fn set_window(
+    app: &AppHandle,
+    config: &PakeConfig,
+    tauri_config: &Config,
+) -> tauri::Result<WebviewWindow> {
+    build_window_with_label(app, config, tauri_config, "pake")
 }
 
 pub fn open_additional_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
@@ -122,10 +126,12 @@ fn build_window_with_label(
     tauri_config: &Config,
     label: &str,
 ) -> tauri::Result<WebviewWindow> {
-    let window_config = config
-        .windows
-        .first()
-        .expect("At least one window configuration is required");
+    let window_config = config.windows.first().ok_or_else(|| {
+        tauri::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "pake.json must define at least one window configuration",
+        ))
+    })?;
     let url = match window_config.url_type.as_str() {
         "web" => {
             let parsed = window_config.url.parse().map_err(|err| {
@@ -177,12 +183,14 @@ fn build_window(
         .product_name
         .clone()
         .unwrap_or_else(|| "pake".to_string());
-    let _data_dir = get_data_dir(app, package_name);
+    let _data_dir = get_data_dir(app, package_name).map_err(tauri::Error::Io)?;
 
-    let window_config = config
-        .windows
-        .first()
-        .expect("At least one window configuration is required");
+    let window_config = config.windows.first().ok_or_else(|| {
+        tauri::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "pake.json must define at least one window configuration",
+        ))
+    })?;
 
     let user_agent = config.user_agent.get();
 
@@ -273,10 +281,15 @@ fn build_window(
         });
     }
 
-    // Add initialization scripts
+    // Add initialization scripts. Order matters: pakeConfig must land before
+    // any script that reads it (e.g. fullscreen polyfill checks for an opt-out
+    // flag), and toast must register `window.pakeToast` before Rust code
+    // calls show_toast().
     window_builder = window_builder
         .initialization_script(&config_script)
-        .initialization_script(include_str!("../inject/component.js"))
+        .initialization_script(include_str!("../inject/find.js"))
+        .initialization_script(include_str!("../inject/toast.js"))
+        .initialization_script(include_str!("../inject/fullscreen.js"))
         .initialization_script(include_str!("../inject/event.js"))
         .initialization_script(include_str!("../inject/style.js"))
         .initialization_script(include_str!("../inject/theme_refresh.js"))
@@ -391,7 +404,9 @@ fn build_window(
     }
 
     if let Some(features) = new_window_features {
-        // macOS popup webviews must reuse the opener webview configuration.
+        // Reuse only opener-provided position/size on macOS; sharing the opener
+        // WKWebViewConfiguration triggers duplicate WKScriptMessageHandler
+        // registrations on macOS 26+ and crashes the app (issue #1194).
         #[cfg(target_os = "macos")]
         {
             if let Some(position) = features.position() {
@@ -402,9 +417,7 @@ fn build_window(
                 window_builder = window_builder.inner_size(size.width, size.height);
             }
 
-            window_builder = window_builder
-                .with_webview_configuration(features.opener().target_configuration.clone())
-                .focused(true);
+            window_builder = window_builder.focused(true);
         }
 
         #[cfg(not(target_os = "macos"))]
@@ -416,4 +429,38 @@ fn build_window(
     window_builder = window_builder.on_navigation(|_| true);
 
     window_builder.build()
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod proxy_arg_tests {
+    use super::*;
+
+    fn parse(url: &str) -> Url {
+        Url::from_str(url).unwrap()
+    }
+
+    #[test]
+    fn http_url_with_explicit_port() {
+        let arg = build_proxy_browser_arg(&parse("http://127.0.0.1:7890")).unwrap();
+        assert_eq!(arg, "--proxy-server=http://127.0.0.1:7890");
+    }
+
+    #[test]
+    fn http_url_uses_default_port_when_missing() {
+        let arg = build_proxy_browser_arg(&parse("http://proxy.local")).unwrap();
+        assert_eq!(arg, "--proxy-server=http://proxy.local:80");
+    }
+
+    #[test]
+    fn socks5_url_uses_default_port_when_missing() {
+        let arg = build_proxy_browser_arg(&parse("socks5://proxy.local")).unwrap();
+        assert_eq!(arg, "--proxy-server=socks5://proxy.local:1080");
+    }
+
+    #[test]
+    fn https_scheme_is_not_supported_yet() {
+        // https proxies fall back to platform proxy_url; we only emit a CLI arg
+        // for http/socks5 today.
+        assert!(build_proxy_browser_arg(&parse("https://proxy.local:8443")).is_none());
+    }
 }

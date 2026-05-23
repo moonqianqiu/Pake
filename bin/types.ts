@@ -108,6 +108,9 @@ export interface PakeCliOptions {
   // Regex pattern to match URLs that should be considered internal
   internalUrlRegex: string;
 
+  // Enable in-page Find UI and Cmd/Ctrl+F/G shortcuts, default false
+  enableFind: boolean;
+
   // Initial page zoom level (50-200), default 100
   zoom: number;
 
@@ -167,6 +170,7 @@ export interface WindowConfig {
   start_to_tray: boolean;
   force_internal_navigation: boolean;
   internal_url_regex: string;
+  enable_find: boolean;
   zoom: number;
   min_width: number;
   min_height: number;

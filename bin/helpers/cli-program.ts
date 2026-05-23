@@ -196,6 +196,14 @@ ${green('|_|   \\__,_|_|\\_\\___|  can turn any webpage into a desktop app with 
         .hideHelp(),
     )
     .addOption(
+      new Option(
+        '--enable-find',
+        'Enable in-page Find UI with Cmd/Ctrl+F/G shortcuts',
+      )
+        .default(DEFAULT.enableFind)
+        .hideHelp(),
+    )
+    .addOption(
       new Option('--installer-language <string>', 'Installer language')
         .default(DEFAULT.installerLanguage)
         .hideHelp(),
