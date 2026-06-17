@@ -24,8 +24,31 @@ import {
   getBuildTimeout,
   getInstallCommand,
   getInstallTimeout,
-  isLinuxDeployStripError,
 } from './env';
+// Appended to the error when a Linux AppImage build fails for good. linuxdeploy's
+// diagnostics stream to the terminal (stdio: 'inherit') and never reach
+// error.message, so we cannot name the exact cause. We only reach here after
+// NO_STRIP=1 has been applied and still failed, so strip is shown as ruled out.
+const APPIMAGE_BAR = '━'.repeat(56);
+const APPIMAGE_FAILURE_GUIDANCE =
+  `\n\n${APPIMAGE_BAR}\n` +
+  'Linux AppImage Build Failed\n' +
+  `${APPIMAGE_BAR}\n\n` +
+  'The AppImage bundler (linuxdeploy) failed. Common causes and fixes:\n\n' +
+  '  • Strip incompatibility (glibc 2.38+): NO_STRIP=1 was already applied and\n' +
+  '    the build still failed, so strip is likely not the cause.\n' +
+  '  • Missing gdk-pixbuf loaders (e.g. "cannot stat\n' +
+  "    '/usr/lib/gdk-pixbuf-2.0/...'\"): install them, then rebuild:\n" +
+  '      Arch:    sudo pacman -S gdk-pixbuf2 librsvg\n' +
+  '      Debian:  sudo apt install librsvg2-common gdk-pixbuf2.0-bin\n' +
+  '      Fedora:  sudo dnf install gdk-pixbuf2-modules librsvg2\n' +
+  '      then:    sudo gdk-pixbuf-query-loaders --update-cache\n' +
+  '      (Arch refreshes the cache automatically via a pacman hook)\n' +
+  '  • Running in Docker/container: AppImage needs /dev/fuse:\n' +
+  '      --privileged --device /dev/fuse --security-opt apparmor=unconfined\n\n' +
+  'Still stuck? Build a DEB instead: pake <url> --targets deb\n' +
+  'Detailed guide: https://github.com/tw93/Pake/blob/main/docs/faq.md\n' +
+  APPIMAGE_BAR;
 
 export default abstract class BaseBuilder {
   protected options: PakeAppOptions;
@@ -133,7 +156,7 @@ export default abstract class BaseBuilder {
     await shellExec(command);
   }
 
-  async buildAndCopy(url: string, target: string) {
+  async buildAndCopy(url: string, target: string, logSuccess = true) {
     const { name = 'pake-app' } = this.options;
     await mergeConfig(url, this.options, tauriConfig);
 
@@ -156,18 +179,15 @@ export default abstract class BaseBuilder {
     const resolveExecEnv = () =>
       Object.keys(buildEnv).length > 0 ? buildEnv : undefined;
 
-    // Warn users about potential AppImage build failures on modern Linux systems.
-    // The linuxdeploy tool bundled in Tauri uses an older strip tool that doesn't
-    // recognize the .relr.dyn section introduced in glibc 2.38+.
-    if (process.platform === 'linux' && target === 'appimage') {
-      if (!buildEnv.NO_STRIP) {
-        logger.warn(
-          '⚠ Building AppImage on Linux may fail due to strip incompatibility with glibc 2.38+',
-        );
-        logger.warn(
-          '⚠ If build fails, retry with: NO_STRIP=1 pake <url> --targets appimage',
-        );
-      }
+    const isLinuxAppImage =
+      process.platform === 'linux' && target === 'appimage';
+
+    // AppImage builds can fail at the linuxdeploy strip step on glibc 2.38+.
+    // A real failure now prints full guidance, so only hint in debug mode.
+    if (isLinuxAppImage && !buildEnv.NO_STRIP && this.options.debug) {
+      logger.warn(
+        '⚠ AppImage strip step can fail on glibc 2.38+; Pake will auto-retry with NO_STRIP=1.',
+      );
     }
 
     const buildCommand = `cd "${npmDirectory}" && ${this.getBuildCommand(packageManager)}`;
@@ -176,23 +196,28 @@ export default abstract class BaseBuilder {
     try {
       await shellExec(buildCommand, buildTimeout, resolveExecEnv());
     } catch (error) {
-      const shouldRetryWithoutStrip =
-        process.platform === 'linux' &&
-        target === 'appimage' &&
-        !buildEnv.NO_STRIP &&
-        isLinuxDeployStripError(error);
-
-      if (shouldRetryWithoutStrip) {
-        logger.warn(
-          '⚠ AppImage build failed during linuxdeploy strip step, retrying with NO_STRIP=1 automatically.',
-        );
-        buildEnv = {
-          ...buildEnv,
-          NO_STRIP: '1',
-        };
-        await shellExec(buildCommand, buildTimeout, resolveExecEnv());
-      } else {
+      if (!isLinuxAppImage) {
         throw error;
+      }
+
+      // linuxdeploy's diagnostics stream to the terminal (stdio: 'inherit') and
+      // never reach error.message, so we cannot classify the cause. strip is the
+      // most common AppImage failure, so retry once with NO_STRIP=1; if that
+      // (or an already-NO_STRIP run) still fails, surface all known causes.
+      if (buildEnv.NO_STRIP) {
+        (error as Error).message += APPIMAGE_FAILURE_GUIDANCE;
+        throw error;
+      }
+
+      logger.warn(
+        '⚠ AppImage build failed, retrying once with NO_STRIP=1 (common glibc 2.38+ strip issue).',
+      );
+      buildEnv = { ...buildEnv, NO_STRIP: '1' };
+      try {
+        await shellExec(buildCommand, buildTimeout, resolveExecEnv());
+      } catch (retryError) {
+        (retryError as Error).message += APPIMAGE_FAILURE_GUIDANCE;
+        throw retryError;
       }
     }
 
@@ -209,8 +234,10 @@ export default abstract class BaseBuilder {
     }
 
     await fsExtra.remove(appPath);
-    logger.success('✔ Build success!');
-    logger.success('✔ App installer located in', distPath);
+    if (logSuccess) {
+      logger.success('✔ Build success!');
+      logger.success('✔ App installer located in', distPath);
+    }
 
     // Log binary location if preserved
     if (this.options.keepBinary) {

@@ -1,6 +1,6 @@
 {
   "name": "pake-cli",
-  "version": "3.11.7",
+  "version": "3.11.9",
   "description": "🤱🏻 Turn any webpage into a desktop app with one command. 🤱🏻 一键打包网页生成轻量桌面应用。",
   "engines": {
     "node": ">=18.0.0"
@@ -26,6 +26,7 @@
     "productivity"
   ],
   "files": [
+    "LICENSE-EXCEPTION",
     "dist",
     "src-tauri"
   ],
@@ -38,6 +39,7 @@
     "analyze": "cd src-tauri && cargo bloat --release --crates",
     "tauri": "tauri",
     "cli": "cross-env NODE_ENV=development rollup -c -w",
+    "cli:dev": "cross-env NODE_ENV=development rollup -c -w",
     "cli:build": "cross-env NODE_ENV=production rollup -c",
     "test": "pnpm run cli:build && cross-env PAKE_CREATE_APP=1 node tests/index.js",
     "format": "prettier --write . --ignore-unknown && find tests -name '*.js' -exec sed -i '' 's/[[:space:]]*$//' {} \\; && cd src-tauri && cargo fmt --verbose",
@@ -48,7 +50,7 @@
   },
   "type": "module",
   "exports": "./dist/cli.js",
-  "license": "MIT",
+  "license": "GPL-3.0-or-later",
   "dependencies": {
     "@tauri-apps/api": "~2.10.1",
     "@tauri-apps/cli": "^2.10.0",

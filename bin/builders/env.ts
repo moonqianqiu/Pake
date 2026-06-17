@@ -204,22 +204,3 @@ export async function configureCargoRegistry(
     );
   }
 }
-
-/**
- * Returns true when an error string looks like the well-known Tauri+linuxdeploy
- * strip failure that we automatically retry with NO_STRIP=1.
- */
-export function isLinuxDeployStripError(error: unknown): boolean {
-  if (!(error instanceof Error) || !error.message) {
-    return false;
-  }
-  const message = error.message.toLowerCase();
-  return (
-    message.includes('linuxdeploy') ||
-    message.includes('failed to run linuxdeploy') ||
-    message.includes('strip:') ||
-    message.includes('unable to recognise the format of the input file') ||
-    message.includes('appimage tool failed') ||
-    message.includes('strip tool')
-  );
-}

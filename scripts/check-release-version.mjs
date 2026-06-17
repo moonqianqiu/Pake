@@ -4,7 +4,11 @@ import fs from "node:fs";
 import path from "node:path";
 
 const root = process.cwd();
-const tag = process.argv[2] || process.env.GITHUB_REF_NAME;
+// Only trust GITHUB_REF_NAME when the workflow actually runs on a tag;
+// on workflow_dispatch it holds the branch name, which is not a version.
+const refTag =
+  process.env.GITHUB_REF_TYPE === "tag" ? process.env.GITHUB_REF_NAME : "";
+const tag = process.argv[2] || refTag;
 const errors = [];
 
 function readText(filePath) {
@@ -80,6 +84,12 @@ expectEqual(
   packageJson.repository?.url,
   "git+https://github.com/tw93/Pake.git",
 );
+
+if (!packageJson.files?.includes("LICENSE-EXCEPTION")) {
+  errors.push(
+    "package.json files: LICENSE-EXCEPTION must be included in the npm package",
+  );
+}
 
 if (errors.length > 0) {
   console.error("Release version check failed:");

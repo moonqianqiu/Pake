@@ -20,7 +20,7 @@ import { InvalidArgumentError, program as program$1, Option } from 'commander';
 import fs$1 from 'fs';
 
 var name = "pake-cli";
-var version = "3.11.7";
+var version = "3.11.9";
 var description = "🤱🏻 Turn any webpage into a desktop app with one command. 🤱🏻 一键打包网页生成轻量桌面应用。";
 var engines = {
 	node: ">=18.0.0"
@@ -46,6 +46,7 @@ var keywords = [
 	"productivity"
 ];
 var files = [
+	"LICENSE-EXCEPTION",
 	"dist",
 	"src-tauri"
 ];
@@ -58,6 +59,7 @@ var scripts = {
 	analyze: "cd src-tauri && cargo bloat --release --crates",
 	tauri: "tauri",
 	cli: "cross-env NODE_ENV=development rollup -c -w",
+	"cli:dev": "cross-env NODE_ENV=development rollup -c -w",
 	"cli:build": "cross-env NODE_ENV=production rollup -c",
 	test: "pnpm run cli:build && cross-env PAKE_CREATE_APP=1 node tests/index.js",
 	format: "prettier --write . --ignore-unknown && find tests -name '*.js' -exec sed -i '' 's/[[:space:]]*$//' {} \\; && cd src-tauri && cargo fmt --verbose",
@@ -68,7 +70,7 @@ var scripts = {
 };
 var type = "module";
 var exports$1 = "./dist/cli.js";
-var license = "MIT";
+var license = "GPL-3.0-or-later";
 var dependencies = {
 	"@tauri-apps/api": "~2.10.1",
 	"@tauri-apps/cli": "^2.10.0",
@@ -248,38 +250,10 @@ async function shellExec(command, timeout = 300000, env) {
         if (error.timedOut) {
             throw new Error(`Command timed out after ${timeout}ms: "${command}". Try increasing timeout or check network connectivity.`);
         }
-        let errorMsg = `Error occurred while executing command "${command}". Exit code: ${exitCode}. Details: ${errorMessage}`;
-        // Provide helpful guidance for common Linux AppImage build failures
-        // caused by strip tool incompatibility with modern glibc (2.38+)
-        const lowerError = errorMessage.toLowerCase();
-        if (process.platform === 'linux' &&
-            (lowerError.includes('linuxdeploy') ||
-                lowerError.includes('appimage') ||
-                lowerError.includes('strip'))) {
-            errorMsg +=
-                '\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n' +
-                    'Linux AppImage Build Failed\n' +
-                    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n' +
-                    'Cause: Strip tool incompatibility with glibc 2.38+\n' +
-                    '       (affects Debian Trixie, Arch Linux, and other modern distros)\n\n' +
-                    'Quick fix:\n' +
-                    '  NO_STRIP=1 pake <url> --targets appimage --debug\n\n' +
-                    'Alternatives:\n' +
-                    '  • Use DEB format: pake <url> --targets deb\n' +
-                    '  • Update binutils: sudo apt install binutils (or pacman -S binutils)\n' +
-                    '  • Detailed guide: https://github.com/tw93/Pake/blob/main/docs/faq.md\n' +
-                    '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━';
-            if (lowerError.includes('fuse') ||
-                lowerError.includes('operation not permitted') ||
-                lowerError.includes('/dev/fuse')) {
-                errorMsg +=
-                    '\n\nDocker / Container hint:\n' +
-                        '  AppImage tooling needs access to /dev/fuse. When running inside Docker, add:\n' +
-                        '    --privileged --device /dev/fuse --security-opt apparmor=unconfined\n' +
-                        '  or run on the host directly.';
-            }
-        }
-        throw new Error(errorMsg);
+        // AppImage/linuxdeploy guidance is added by the caller (BaseBuilder), which
+        // knows the build target. We only have the command line here (the tool's
+        // diagnostics stream to the terminal via stdio:inherit, not into the error).
+        throw new Error(`Error occurred while executing command "${command}". Exit code: ${exitCode}. Details: ${errorMessage}`);
     }
 }
 
@@ -437,6 +411,17 @@ function generateIdentifierSafeName(name) {
     return cleaned;
 }
 
+const LINUX_TARGET_TYPES = ['deb', 'appimage', 'rpm', 'zst'];
+// Returns the valid Linux build targets from a comma-separated targets
+// string, preserving LINUX_TARGET_TYPES order. Unknown entries are dropped.
+function filterLinuxTargets(targets) {
+    const requested = targets.split(',').map((target) => target.trim());
+    return LINUX_TARGET_TYPES.filter((target) => requested.includes(target));
+}
+function needsTemporaryDebForZst(targets) {
+    return targets.includes('zst') && !targets.includes('deb');
+}
+
 /**
  * Pure transform from CLI options to the window-config slice that gets
  * merged into pake.json. Exposed for snapshot testing so option drift
@@ -562,18 +547,15 @@ Terminal=false
         [desktopInstallPath]: `assets/${desktopFileName}`,
     };
     const validTargets = [
-        'deb',
-        'appimage',
-        'rpm',
-        'deb-arm64',
-        'appimage-arm64',
-        'rpm-arm64',
+        ...LINUX_TARGET_TYPES,
+        ...LINUX_TARGET_TYPES.map((target) => `${target}-arm64`),
     ];
     const baseTarget = options.targets.includes('-arm64')
         ? options.targets.replace('-arm64', '')
         : options.targets;
     if (validTargets.includes(options.targets)) {
-        tauriConf.bundle.targets = [baseTarget];
+        // zst is repacked from the deb payload, so Tauri itself bundles a deb.
+        tauriConf.bundle.targets = [baseTarget === 'zst' ? 'deb' : baseTarget];
     }
     else {
         logger.warn(`✼ The target must be one of ${validTargets.join(', ')}, the default 'deb' will be used.`);
@@ -920,23 +902,30 @@ async function configureCargoRegistry(tauriSrcPath, useCnMirror) {
         logger.warn(`✼ ${projectConf} still references rsproxy.cn. Remove it or set ${CN_MIRROR_ENV}=1 if you want to use the CN mirror.`);
     }
 }
-/**
- * Returns true when an error string looks like the well-known Tauri+linuxdeploy
- * strip failure that we automatically retry with NO_STRIP=1.
- */
-function isLinuxDeployStripError(error) {
-    if (!(error instanceof Error) || !error.message) {
-        return false;
-    }
-    const message = error.message.toLowerCase();
-    return (message.includes('linuxdeploy') ||
-        message.includes('failed to run linuxdeploy') ||
-        message.includes('strip:') ||
-        message.includes('unable to recognise the format of the input file') ||
-        message.includes('appimage tool failed') ||
-        message.includes('strip tool'));
-}
 
+// Appended to the error when a Linux AppImage build fails for good. linuxdeploy's
+// diagnostics stream to the terminal (stdio: 'inherit') and never reach
+// error.message, so we cannot name the exact cause. We only reach here after
+// NO_STRIP=1 has been applied and still failed, so strip is shown as ruled out.
+const APPIMAGE_BAR = '━'.repeat(56);
+const APPIMAGE_FAILURE_GUIDANCE = `\n\n${APPIMAGE_BAR}\n` +
+    'Linux AppImage Build Failed\n' +
+    `${APPIMAGE_BAR}\n\n` +
+    'The AppImage bundler (linuxdeploy) failed. Common causes and fixes:\n\n' +
+    '  • Strip incompatibility (glibc 2.38+): NO_STRIP=1 was already applied and\n' +
+    '    the build still failed, so strip is likely not the cause.\n' +
+    '  • Missing gdk-pixbuf loaders (e.g. "cannot stat\n' +
+    "    '/usr/lib/gdk-pixbuf-2.0/...'\"): install them, then rebuild:\n" +
+    '      Arch:    sudo pacman -S gdk-pixbuf2 librsvg\n' +
+    '      Debian:  sudo apt install librsvg2-common gdk-pixbuf2.0-bin\n' +
+    '      Fedora:  sudo dnf install gdk-pixbuf2-modules librsvg2\n' +
+    '      then:    sudo gdk-pixbuf-query-loaders --update-cache\n' +
+    '      (Arch refreshes the cache automatically via a pacman hook)\n' +
+    '  • Running in Docker/container: AppImage needs /dev/fuse:\n' +
+    '      --privileged --device /dev/fuse --security-opt apparmor=unconfined\n\n' +
+    'Still stuck? Build a DEB instead: pake <url> --targets deb\n' +
+    'Detailed guide: https://github.com/tw93/Pake/blob/main/docs/faq.md\n' +
+    APPIMAGE_BAR;
 class BaseBuilder {
     constructor(options) {
         this.options = options;
@@ -1011,7 +1000,7 @@ class BaseBuilder {
         const command = `cd "${npmDirectory}" && ${packageManager} run tauri${argSeparator} dev --config "${configPath}" ${featureArgs}`;
         await shellExec(command);
     }
-    async buildAndCopy(url, target) {
+    async buildAndCopy(url, target, logSuccess = true) {
         const { name = 'pake-app' } = this.options;
         await mergeConfig(url, this.options, tauriConfig);
         const packageManager = await detectPackageManager();
@@ -1028,14 +1017,11 @@ class BaseBuilder {
             ...(process.env.NO_STRIP ? { NO_STRIP: process.env.NO_STRIP } : {}),
         };
         const resolveExecEnv = () => Object.keys(buildEnv).length > 0 ? buildEnv : undefined;
-        // Warn users about potential AppImage build failures on modern Linux systems.
-        // The linuxdeploy tool bundled in Tauri uses an older strip tool that doesn't
-        // recognize the .relr.dyn section introduced in glibc 2.38+.
-        if (process.platform === 'linux' && target === 'appimage') {
-            if (!buildEnv.NO_STRIP) {
-                logger.warn('⚠ Building AppImage on Linux may fail due to strip incompatibility with glibc 2.38+');
-                logger.warn('⚠ If build fails, retry with: NO_STRIP=1 pake <url> --targets appimage');
-            }
+        const isLinuxAppImage = process.platform === 'linux' && target === 'appimage';
+        // AppImage builds can fail at the linuxdeploy strip step on glibc 2.38+.
+        // A real failure now prints full guidance, so only hint in debug mode.
+        if (isLinuxAppImage && !buildEnv.NO_STRIP && this.options.debug) {
+            logger.warn('⚠ AppImage strip step can fail on glibc 2.38+; Pake will auto-retry with NO_STRIP=1.');
         }
         const buildCommand = `cd "${npmDirectory}" && ${this.getBuildCommand(packageManager)}`;
         const buildTimeout = getBuildTimeout();
@@ -1043,20 +1029,25 @@ class BaseBuilder {
             await shellExec(buildCommand, buildTimeout, resolveExecEnv());
         }
         catch (error) {
-            const shouldRetryWithoutStrip = process.platform === 'linux' &&
-                target === 'appimage' &&
-                !buildEnv.NO_STRIP &&
-                isLinuxDeployStripError(error);
-            if (shouldRetryWithoutStrip) {
-                logger.warn('⚠ AppImage build failed during linuxdeploy strip step, retrying with NO_STRIP=1 automatically.');
-                buildEnv = {
-                    ...buildEnv,
-                    NO_STRIP: '1',
-                };
+            if (!isLinuxAppImage) {
+                throw error;
+            }
+            // linuxdeploy's diagnostics stream to the terminal (stdio: 'inherit') and
+            // never reach error.message, so we cannot classify the cause. strip is the
+            // most common AppImage failure, so retry once with NO_STRIP=1; if that
+            // (or an already-NO_STRIP run) still fails, surface all known causes.
+            if (buildEnv.NO_STRIP) {
+                error.message += APPIMAGE_FAILURE_GUIDANCE;
+                throw error;
+            }
+            logger.warn('⚠ AppImage build failed, retrying once with NO_STRIP=1 (common glibc 2.38+ strip issue).');
+            buildEnv = { ...buildEnv, NO_STRIP: '1' };
+            try {
                 await shellExec(buildCommand, buildTimeout, resolveExecEnv());
             }
-            else {
-                throw error;
+            catch (retryError) {
+                retryError.message += APPIMAGE_FAILURE_GUIDANCE;
+                throw retryError;
             }
         }
         // Copy app
@@ -1070,8 +1061,10 @@ class BaseBuilder {
             await this.copyRawBinary(npmDirectory, name);
         }
         await fsExtra.remove(appPath);
-        logger.success('✔ Build success!');
-        logger.success('✔ App installer located in', distPath);
+        if (logSuccess) {
+            logger.success('✔ Build success!');
+            logger.success('✔ App installer located in', distPath);
+        }
         // Log binary location if preserved
         if (this.options.keepBinary) {
             const binaryPath = this.getRawBinaryPath(name);
@@ -1414,21 +1407,130 @@ class LinuxBuilder extends BaseBuilder {
         return `${name}_${version}_${arch}`;
     }
     async build(url) {
-        const targetTypes = ['deb', 'appimage', 'rpm'];
-        const requestedTargets = this.options.targets
-            .split(',')
-            .map((t) => t.trim());
-        for (const target of targetTypes) {
-            if (requestedTargets.includes(target)) {
-                this.currentBuildType = target;
+        const targets = filterLinuxTargets(this.options.targets);
+        if (targets.length === 0) {
+            throw new Error(`No valid Linux target in "${this.options.targets}". Valid targets: ${LINUX_TARGET_TYPES.join(', ')}.`);
+        }
+        const useTemporaryDebForZst = needsTemporaryDebForZst(targets);
+        for (const target of targets) {
+            this.currentBuildType = target;
+            if (target === 'zst') {
+                if (useTemporaryDebForZst) {
+                    await this.buildAndCopy(url, 'deb', false);
+                }
+                await this.createArchPackageFromDeb({
+                    removeSourceDeb: useTemporaryDebForZst,
+                });
+            }
+            else {
                 await this.buildAndCopy(url, target);
             }
         }
     }
+    async ensureArchPackagingTools() {
+        const requiredTools = [
+            { tool: 'ar', pacmanPackage: 'binutils' },
+            { tool: 'bsdtar', pacmanPackage: 'libarchive' },
+        ];
+        for (const { tool, pacmanPackage } of requiredTools) {
+            try {
+                await shellExec(`command -v ${tool} >/dev/null 2>&1`);
+            }
+            catch {
+                throw new Error(`Building a zst package requires "${tool}". Install it first, e.g. "sudo pacman -S ${pacmanPackage}".`);
+            }
+        }
+    }
+    async createArchPackageFromDeb({ removeSourceDeb, }) {
+        const { name = 'pake-app' } = this.options;
+        const packageName = generateLinuxPackageName(name);
+        const version = tauriConfig.version;
+        const arch = this.buildArch === 'arm64' ? 'aarch64' : 'x86_64';
+        const debPath = path.resolve(`${name}.deb`);
+        const packagePath = path.resolve(`${name}-${version}-1-${arch}.pkg.tar.zst`);
+        const workDir = path.resolve('.pake-arch-package');
+        const dataDir = path.join(workDir, 'data');
+        const controlDir = path.join(workDir, 'control');
+        await this.ensureArchPackagingTools();
+        await fsExtra.remove(workDir);
+        await fsExtra.ensureDir(dataDir);
+        await fsExtra.ensureDir(controlDir);
+        try {
+            await shellExec(`cd "${controlDir}" && ar x "${debPath}"`);
+            const dataArchive = (await fsExtra.readdir(controlDir)).find((file) => file.startsWith('data.tar'));
+            if (!dataArchive) {
+                throw new Error(`Could not find data.tar payload in ${debPath}`);
+            }
+            await shellExec(`tar -xf "${path.join(controlDir, dataArchive)}" -C "${dataDir}"`);
+            // Drop the desktop entry auto-generated by the Tauri deb bundler;
+            // the payload already ships Pake's own com.pake.<name>.desktop.
+            await fsExtra.remove(path.join(dataDir, 'usr', 'share', 'applications', `${packageName}.desktop`));
+            const installedSize = await this.getDirectorySize(dataDir);
+            const pkgInfo = `pkgname = ${packageName}
+pkgbase = ${packageName}
+pkgver = ${version}-1
+pkgdesc = ${name} Pake app
+url = https://github.com/tw93/Pake
+builddate = ${Math.floor(Date.now() / 1000)}
+packager = Pake
+size = ${installedSize}
+arch = ${arch}
+license = custom
+depend = cairo
+depend = desktop-file-utils
+depend = gdk-pixbuf2
+depend = glib2
+depend = gtk3
+depend = hicolor-icon-theme
+depend = libsoup3
+depend = pango
+depend = webkit2gtk-4.1
+`;
+            await fsExtra.writeFile(path.join(dataDir, '.PKGINFO'), pkgInfo);
+            await fsExtra.writeFile(path.join(dataDir, '.INSTALL'), `post_install() {
+  gtk-update-icon-cache -q -t -f usr/share/icons/hicolor
+  update-desktop-database -q usr/share/applications
+}
+
+post_upgrade() {
+  post_install
+}
+
+post_remove() {
+  gtk-update-icon-cache -q -t -f usr/share/icons/hicolor
+  update-desktop-database -q usr/share/applications
+}
+`);
+            await shellExec(`bsdtar --zstd -cf "${packagePath}" -C "${dataDir}" .PKGINFO .INSTALL usr`);
+            logger.success('✔ Build success!');
+            logger.success('✔ App installer located in', packagePath);
+        }
+        finally {
+            if (removeSourceDeb) {
+                await fsExtra.remove(debPath);
+            }
+            await fsExtra.remove(workDir);
+        }
+    }
+    async getDirectorySize(directory) {
+        let size = 0;
+        for (const entry of await fsExtra.readdir(directory, {
+            withFileTypes: true,
+        })) {
+            const entryPath = path.join(directory, entry.name);
+            if (entry.isDirectory()) {
+                size += await this.getDirectorySize(entryPath);
+            }
+            else if (entry.isFile()) {
+                size += (await fsExtra.stat(entryPath)).size;
+            }
+        }
+        return size;
+    }
     // Override buildAndCopy to ensure currentBuildType is synced if called directly, though the loop above handles it most of the time.
-    async buildAndCopy(url, target) {
+    async buildAndCopy(url, target, logSuccess = true) {
         this.currentBuildType = target;
-        await super.buildAndCopy(url, target);
+        await super.buildAndCopy(url, target, logSuccess);
     }
     getBuildCommand(packageManager = 'pnpm') {
         const configPath = path.join('src-tauri', '.pake', 'tauri.conf.json');
@@ -2341,8 +2443,8 @@ function resolveLocalAppName(filePath, platform) {
         return generateLinuxPackageName(baseName) || 'pake-app';
     }
     const normalized = baseName
-        .replace(/[^a-zA-Z0-9\u4e00-\u9fff -]/g, '')
-        .replace(/^[ -]+/, '')
+        .replace(/[^a-zA-Z0-9\u4e00-\u9fff .-]/g, '')
+        .replace(/^[ .-]+/, '')
         .replace(/\s+/g, ' ')
         .trim();
     return normalized || 'pake-app';
@@ -2350,7 +2452,7 @@ function resolveLocalAppName(filePath, platform) {
 function isValidName(name, platform) {
     const reg = platform === 'linux'
         ? /^[a-z0-9\u4e00-\u9fff][a-z0-9\u4e00-\u9fff-]*$/
-        : /^[a-zA-Z0-9\u4e00-\u9fff][a-zA-Z0-9\u4e00-\u9fff- ]*$/;
+        : /^[a-zA-Z0-9\u4e00-\u9fff][a-zA-Z0-9\u4e00-\u9fff .-]*$/;
     return !!name && reg.test(name);
 }
 async function handleOptions(options, url) {
@@ -2371,7 +2473,7 @@ async function handleOptions(options, url) {
     }
     if (name && !isValidName(name, platform)) {
         const LINUX_NAME_ERROR = `✕ Name should only include lowercase letters, numbers, and dashes (not leading dashes). Examples: com-123-xxx, 123pan, pan123, weread, we-read, 123.`;
-        const DEFAULT_NAME_ERROR = `✕ Name should only include letters, numbers, dashes, and spaces (not leading dashes and spaces). Examples: 123pan, 123Pan, Pan123, weread, WeRead, WERead, we-read, We Read, 123.`;
+        const DEFAULT_NAME_ERROR = `✕ Name should only include letters, numbers, dots, dashes, and spaces (not leading dots, dashes, and spaces). Examples: 123pan, 123Pan, Pan123, weread, WeRead, WERead, we-read, We Read, Vectorizer.AI, 123.`;
         const errorMsg = platform === 'linux' ? LINUX_NAME_ERROR : DEFAULT_NAME_ERROR;
         if (isActions) {
             logger.error(errorMsg);
@@ -2449,9 +2551,15 @@ const DEFAULT_PAKE_OPTIONS = {
 };
 
 function validateNumberInput(value) {
-    const parsedValue = Number(value);
-    if (isNaN(parsedValue)) {
+    if (value.trim() === '') {
         throw new InvalidArgumentError('Not a number.');
+    }
+    const parsedValue = Number(value);
+    if (!Number.isFinite(parsedValue)) {
+        throw new InvalidArgumentError('Not a number.');
+    }
+    if (parsedValue < 0) {
+        throw new InvalidArgumentError('Must not be negative.');
     }
     return parsedValue;
 }
@@ -2585,8 +2693,8 @@ ${green('|_|   \\__,_|_|\\_\\___|  can turn any webpage into a desktop app with 
         .addOption(new Option('--zoom <number>', 'Initial page zoom level (50-200)')
         .default(DEFAULT_PAKE_OPTIONS.zoom)
         .argParser((value) => {
-        const zoom = parseInt(value);
-        if (isNaN(zoom) || zoom < 50 || zoom > 200) {
+        const zoom = Number(value);
+        if (!Number.isFinite(zoom) || zoom < 50 || zoom > 200) {
             throw new Error('--zoom must be a number between 50 and 200');
         }
         return zoom;
