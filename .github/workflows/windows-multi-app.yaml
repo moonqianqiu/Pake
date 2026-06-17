@@ -50,7 +50,8 @@ jobs:
             @{ title="Z";           name="Z";           url="https://chat.z.ai";               icon="https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/z_128.ico" },
             @{ title="Minimax";     name="Minimax";     url="https://agent.minimaxi.com";      icon="https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/minimax_128.ico" },
             @{ title="HuggingChat"; name="HuggingChat"; url="https://huggingface.co/chat";     icon="https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/huggingface_128.ico" },
-            @{ title="MIMO";        name="MIMO";        url="https://aistudio.xiaomimimo.com"; icon="https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/MIMO_128.ico" }
+            @{ title="MIMO";        name="MIMO";        url="https://aistudio.xiaomimimo.com"; icon="https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/MIMO_128.ico" },
+            @{ title="Copilot";     name="Copilot";     url="https://copilot.microsoft.com";   icon="https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/copilot.ico" }
           )
 
           New-Item -Path "output\windows" -ItemType Directory -Force | Out-Null
