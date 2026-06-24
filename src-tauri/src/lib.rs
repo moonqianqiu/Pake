@@ -10,26 +10,132 @@ use tauri_plugin_window_state::StateFlags;
 use std::time::Duration;
 
 const WINDOW_SHOW_DELAY: u64 = 50;
+#[cfg(target_os = "linux")]
+const PAKE_LINUX_WEBKIT_SAFE_MODE: &str = "PAKE_LINUX_WEBKIT_SAFE_MODE";
+#[cfg(target_os = "linux")]
+const WEBKIT_DISABLE_DMABUF_RENDERER: &str = "WEBKIT_DISABLE_DMABUF_RENDERER";
+#[cfg(target_os = "linux")]
+const WEBKIT_DISABLE_COMPOSITING_MODE: &str = "WEBKIT_DISABLE_COMPOSITING_MODE";
+#[cfg(target_os = "linux")]
+const GDK_BACKEND: &str = "GDK_BACKEND";
 
 use app::{
     invoke::{
-        clear_cache_and_restart, clear_dock_badge, download_file, increment_dock_badge,
-        send_notification, set_dock_badge, set_dock_badge_label, update_theme_mode,
+        clear_dock_badge, download_file, increment_dock_badge, send_notification, set_dock_badge,
+        set_dock_badge_label, update_theme_mode,
     },
     setup::{set_global_shortcut, set_system_tray},
     window::{open_additional_window_safe, set_window, MultiWindowState},
 };
 use util::get_pake_config;
 
+#[cfg(any(target_os = "linux", test))]
+fn is_disabled_env_value(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "0" | "false" | "off" | "no" | "native" | "disabled"
+    )
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn is_non_empty_env_value(value: Option<&str>) -> bool {
+    value.map(|value| !value.trim().is_empty()).unwrap_or(false)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn contains_niri(value: &str) -> bool {
+    value
+        .split([':', ';', ',', ' '])
+        .any(|part| part.eq_ignore_ascii_case("niri"))
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn should_enable_linux_webkit_safe_mode_from_values(
+    safe_mode: Option<&str>,
+    niri_socket: Option<&str>,
+    desktop_values: &[Option<&str>],
+) -> bool {
+    if let Some(value) = safe_mode.filter(|value| !value.trim().is_empty()) {
+        return !is_disabled_env_value(value);
+    }
+
+    let is_niri_session = is_non_empty_env_value(niri_socket)
+        || desktop_values
+            .iter()
+            .flatten()
+            .any(|value| contains_niri(value));
+
+    !is_niri_session
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn should_force_wayland_gdk_backend(
+    gdk_backend: Option<&str>,
+    wayland_display: Option<&str>,
+    display: Option<&str>,
+) -> bool {
+    // Respect an explicit user choice.
+    if is_non_empty_env_value(gdk_backend) {
+        return false;
+    }
+
+    // On pure Wayland compositors without XWayland (e.g. Niri), $DISPLAY is unset
+    // and GTK defaults to the X11 backend, which aborts with "Failed to initialize
+    // GTK". Wayland is then the only viable backend, so forcing it is safe.
+    is_non_empty_env_value(wayland_display) && !is_non_empty_env_value(display)
+}
+
+#[cfg(target_os = "linux")]
+fn apply_linux_gdk_backend() {
+    if should_force_wayland_gdk_backend(
+        std::env::var(GDK_BACKEND).ok().as_deref(),
+        std::env::var("WAYLAND_DISPLAY").ok().as_deref(),
+        std::env::var("DISPLAY").ok().as_deref(),
+    ) {
+        std::env::set_var(GDK_BACKEND, "wayland");
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn apply_linux_webkit_runtime_flags() {
+    let safe_mode = std::env::var(PAKE_LINUX_WEBKIT_SAFE_MODE).ok();
+    if safe_mode.as_deref().is_some_and(is_disabled_env_value) {
+        std::env::remove_var(WEBKIT_DISABLE_DMABUF_RENDERER);
+        std::env::remove_var(WEBKIT_DISABLE_COMPOSITING_MODE);
+        return;
+    }
+
+    let desktop_values = [
+        std::env::var("XDG_CURRENT_DESKTOP").ok(),
+        std::env::var("XDG_SESSION_DESKTOP").ok(),
+        std::env::var("DESKTOP_SESSION").ok(),
+    ];
+    let desktop_refs = desktop_values
+        .iter()
+        .map(|value| value.as_deref())
+        .collect::<Vec<_>>();
+
+    if !should_enable_linux_webkit_safe_mode_from_values(
+        safe_mode.as_deref(),
+        std::env::var("NIRI_SOCKET").ok().as_deref(),
+        &desktop_refs,
+    ) {
+        return;
+    }
+
+    if std::env::var(WEBKIT_DISABLE_DMABUF_RENDERER).is_err() {
+        std::env::set_var(WEBKIT_DISABLE_DMABUF_RENDERER, "1");
+    }
+    if std::env::var(WEBKIT_DISABLE_COMPOSITING_MODE).is_err() {
+        std::env::set_var(WEBKIT_DISABLE_COMPOSITING_MODE, "1");
+    }
+}
+
 pub fn run_app() {
     #[cfg(target_os = "linux")]
     {
-        if std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
-            std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
-        }
-        if std::env::var("WEBKIT_DISABLE_COMPOSITING_MODE").is_err() {
-            std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
-        }
+        apply_linux_gdk_backend();
+        apply_linux_webkit_runtime_flags();
     }
 
     let (pake_config, tauri_config) = get_pake_config();
@@ -86,7 +192,6 @@ pub fn run_app() {
             set_dock_badge_label,
             clear_dock_badge,
             update_theme_mode,
-            clear_cache_and_restart,
         ])
         .setup(move |app| {
             app.manage(MultiWindowState::new(
@@ -201,4 +306,100 @@ pub fn run_app() {
 
 pub fn run() {
     run_app()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linux_webkit_safe_mode_stays_on_by_default() {
+        assert!(should_enable_linux_webkit_safe_mode_from_values(
+            None,
+            None,
+            &[None, None, None]
+        ));
+    }
+
+    #[test]
+    fn linux_webkit_safe_mode_is_disabled_for_niri_socket() {
+        assert!(!should_enable_linux_webkit_safe_mode_from_values(
+            None,
+            Some("/run/user/501/niri.sock"),
+            &[None, None, None]
+        ));
+    }
+
+    #[test]
+    fn linux_webkit_safe_mode_is_disabled_for_niri_desktop() {
+        assert!(!should_enable_linux_webkit_safe_mode_from_values(
+            None,
+            None,
+            &[Some("niri"), None, None]
+        ));
+    }
+
+    #[test]
+    fn linux_webkit_safe_mode_can_be_forced_on_for_niri() {
+        assert!(should_enable_linux_webkit_safe_mode_from_values(
+            Some("1"),
+            Some("/run/user/501/niri.sock"),
+            &[Some("niri"), None, None]
+        ));
+    }
+
+    #[test]
+    fn linux_webkit_safe_mode_can_be_disabled_explicitly() {
+        for value in ["0", "false", "off", "no", "native", "disabled"] {
+            assert!(
+                !should_enable_linux_webkit_safe_mode_from_values(
+                    Some(value),
+                    None,
+                    &[None, None, None]
+                ),
+                "expected {value} to disable safe mode"
+            );
+        }
+    }
+
+    #[test]
+    fn forces_wayland_backend_on_pure_wayland() {
+        assert!(should_force_wayland_gdk_backend(
+            None,
+            Some("wayland-0"),
+            None
+        ));
+    }
+
+    #[test]
+    fn forces_wayland_backend_when_display_is_blank() {
+        assert!(should_force_wayland_gdk_backend(
+            None,
+            Some("wayland-0"),
+            Some("   ")
+        ));
+    }
+
+    #[test]
+    fn keeps_default_backend_when_x11_display_present() {
+        assert!(!should_force_wayland_gdk_backend(
+            None,
+            Some("wayland-0"),
+            Some(":0")
+        ));
+    }
+
+    #[test]
+    fn keeps_default_backend_without_wayland_display() {
+        assert!(!should_force_wayland_gdk_backend(None, None, None));
+    }
+
+    #[test]
+    fn respects_explicit_gdk_backend_override() {
+        assert!(!should_force_wayland_gdk_backend(
+            Some("x11"),
+            Some("wayland-0"),
+            None
+        ));
+    }
 }

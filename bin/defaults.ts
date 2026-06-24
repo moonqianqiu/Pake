@@ -44,6 +44,7 @@ export const DEFAULT_PAKE_OPTIONS: PakeCliOptions = {
   startToTray: false,
   forceInternalNavigation: false,
   internalUrlRegex: '',
+  safeDomain: '',
   enableFind: false,
   iterativeBuild: false,
   zoom: 100,
@@ -54,12 +55,4 @@ export const DEFAULT_PAKE_OPTIONS: PakeCliOptions = {
   install: false,
   camera: false,
   microphone: false,
-};
-
-// Just for cli development
-export const DEFAULT_DEV_PAKE_OPTIONS: PakeCliOptions & { url: string } = {
-  ...DEFAULT_PAKE_OPTIONS,
-  url: 'https://weekly.tw93.fun/en',
-  name: 'Weekly',
-  hideTitleBar: true,
 };

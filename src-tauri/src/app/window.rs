@@ -12,8 +12,10 @@ use tauri::{
     AppHandle, Config, Manager, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
 };
 
+use tauri::Theme;
+
 #[cfg(target_os = "macos")]
-use tauri::{Theme, TitleBarStyle};
+use tauri::TitleBarStyle;
 
 #[cfg(target_os = "windows")]
 fn build_proxy_browser_arg(url: &Url) -> Option<String> {
@@ -344,6 +346,14 @@ fn build_window(
 
     let mut parsed_proxy_url: Option<Url> = None;
 
+    // Default to following the system theme (None), only force dark when explicitly set.
+    // Computed once; the matching platform block below is the sole consumer.
+    let theme = if window_config.dark_mode {
+        Some(Theme::Dark)
+    } else {
+        None // Follow system theme
+    };
+
     // Platform-specific configuration must be set before proxy on Windows/Linux
     #[cfg(target_os = "macos")]
     {
@@ -353,20 +363,13 @@ fn build_window(
             TitleBarStyle::Visible
         };
         window_builder = window_builder.title_bar_style(title_bar_style);
-
-        // Default to following system theme (None), only force dark when explicitly set
-        let theme = if window_config.dark_mode {
-            Some(Theme::Dark)
-        } else {
-            None // Follow system theme
-        };
         window_builder = window_builder.theme(theme);
     }
 
     // Windows and Linux: set data_directory before proxy_url
     #[cfg(not(target_os = "macos"))]
     {
-        window_builder = window_builder.data_directory(_data_dir).theme(None);
+        window_builder = window_builder.data_directory(_data_dir).theme(theme);
 
         if !config.proxy_url.is_empty() {
             if let Ok(proxy_url) = Url::from_str(&config.proxy_url) {

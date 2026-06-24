@@ -5,6 +5,21 @@ import { validateNumberInput } from '../../bin/utils/validate.js';
 describe('CLI options', () => {
   const program = getCliProgram();
 
+  it('shows meta options in help', () => {
+    const help = program.helpInformation();
+
+    expect(help).toContain('-h, --help');
+    expect(help).toContain('-v, --version');
+  });
+
+  it('shows advanced options in help', () => {
+    const help = program.helpInformation();
+
+    expect(help).toContain('--enable-find');
+    expect(help).toContain('--internal-url-regex');
+    expect(help).toContain('--hide-on-close');
+  });
+
   it('registers hidden --multi-window option', () => {
     const option = program.options.find(
       (item) => item.long === '--multi-window',
@@ -14,13 +29,42 @@ describe('CLI options', () => {
     expect(option?.defaultValue).toBe(false);
   });
 
-  it('registers hidden --internal-url-regex option', () => {
+  it('exposes --internal-url-regex option', () => {
     const option = program.options.find(
       (item) => item.long === '--internal-url-regex',
     );
 
     expect(option).toBeDefined();
     expect(option?.defaultValue).toBe('');
+    expect(option?.hidden).toBeFalsy();
+  });
+
+  it('exposes --safe-domain option', () => {
+    const option = program.options.find(
+      (item) => item.long === '--safe-domain',
+    );
+
+    expect(option).toBeDefined();
+    expect(option?.defaultValue).toBe('');
+    expect(option?.hidden).toBeFalsy();
+  });
+
+  it('exposes --force-internal-navigation option', () => {
+    const option = program.options.find(
+      (item) => item.long === '--force-internal-navigation',
+    );
+
+    expect(option).toBeDefined();
+    expect(option?.defaultValue).toBe(false);
+    expect(option?.hidden).toBeFalsy();
+  });
+
+  it('exposes --new-window option', () => {
+    const option = program.options.find((item) => item.long === '--new-window');
+
+    expect(option).toBeDefined();
+    expect(option?.defaultValue).toBe(false);
+    expect(option?.hidden).toBeFalsy();
   });
 
   it('registers hidden --identifier option', () => {

@@ -70,7 +70,7 @@ The URL is the link to the web page you want to package or the path to a local H
 
 ### [options]
 
-Various options are available for customization. Here are the most commonly used ones:
+Various options are available for customization. `pake --help` shows every supported CLI option. This page is the complete reference.
 
 | Option             | Description                                     | Example                                        |
 | ------------------ | ----------------------------------------------- | ---------------------------------------------- |
@@ -80,6 +80,8 @@ Various options are available for customization. Here are the most commonly used
 | `--height`         | Window height (default: 780px)                  | `--height 900`                                 |
 | `--hide-title-bar` | Immersive header (macOS only)                   | `--hide-title-bar`                             |
 | `--debug`          | Enable development tools                        | `--debug`                                      |
+| `--help`           | Show all CLI options                            | `--help`                                       |
+| `--version`        | Show CLI version                                | `--version`                                    |
 
 For complete options, see detailed sections below.
 
@@ -216,11 +218,13 @@ Set the version number of the packaged application to be consistent with the nam
 
 #### [dark-mode]
 
-Force Mac to package applications using dark mode, default is `false`.
+Force packaging applications using dark mode (supports macOS, Windows, and Linux), default is `false`.
 
 ```shell
 --dark-mode
 ```
+
+On Linux this goes through WebKitGTK, so whether a page renders dark also depends on the WebKitGTK build honoring the window theme and the site implementing `prefers-color-scheme: dark`.
 
 #### [disabled-web-shortcuts]
 
@@ -260,6 +264,19 @@ Set a regex pattern to determine which URLs should be considered internal (opene
 --internal-url-regex "^https://(app|api)\\.example\\.com"
 ```
 
+#### [safe-domain]
+
+A simpler way to keep trusted domains and their subdomains inside the app. This is useful for workspace callbacks and enterprise SSO flows, for example Slack plus Okta. Pake compiles this list into `internal_url_regex`; if `--internal-url-regex` is also set, the explicit regex wins.
+
+`--safe-domain` matches URL hosts only, not arbitrary path or query text.
+
+```shell
+--safe-domain <domains>
+
+# Keep Slack and Okta auth redirects inside the app
+--safe-domain slack.com,okta.com
+```
+
 #### [multi-arch]
 
 Package the application to support both Intel and M1 chips, exclusively for macOS. Default is `false`.
@@ -291,7 +308,7 @@ Specify the build target architecture or format:
 
 - **Linux**: `deb`, `appimage`, `rpm`, `zst`, `deb-arm64`, `appimage-arm64`, `rpm-arm64`, `zst-arm64` (default: `deb`, `appimage`)
 - **Windows**: `x64`, `arm64` (auto-detects if not specified)
-- **macOS**: `intel`, `apple`, `universal` (auto-detects if not specified)
+- **macOS**: `intel`, `apple`, `universal` (architecture, auto-detects if not specified); `app`, `dmg` (output format, default: `dmg`)
 
 ```shell
 --targets <target>
@@ -302,6 +319,8 @@ Specify the build target architecture or format:
 --targets universal      # macOS Universal (Intel + Apple Silicon)
 --targets apple          # macOS Apple Silicon only
 --targets intel          # macOS Intel only
+--targets app            # macOS app bundle only (.app, skips the DMG step)
+--targets dmg            # macOS DMG installer (default)
 --targets deb            # Linux DEB package (x64)
 --targets rpm            # Linux RPM package (x64)
 --targets appimage       # Linux AppImage (x64)

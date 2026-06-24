@@ -70,7 +70,7 @@ pake [url] [options]
 
 ### [options]
 
-您可以通过传递以下选项来定制打包过程。以下是最常用的选项：
+您可以通过传递以下选项来定制打包过程。`pake --help` 展示全部支持的 CLI 选项。本文档是完整参考。
 
 | 选项               | 描述                                 | 示例                                           |
 | ------------------ | ------------------------------------ | ---------------------------------------------- |
@@ -80,6 +80,8 @@ pake [url] [options]
 | `--height`         | 窗口高度（默认：780px）              | `--height 900`                                 |
 | `--hide-title-bar` | 沉浸式标题栏（仅macOS）              | `--hide-title-bar`                             |
 | `--debug`          | 启用开发者工具                       | `--debug`                                      |
+| `--help`           | 显示全部 CLI 选项                    | `--help`                                       |
+| `--version`        | 显示 CLI 版本                        | `--version`                                    |
 
 完整选项请参见下面的详细说明：
 
@@ -214,11 +216,13 @@ pake https://github.com --name GitHub
 
 #### [dark-mode]
 
-强制 Mac 打包应用使用黑暗模式，默认为 `false`。
+强制打包应用使用黑暗模式（支持 macOS、Windows 和 Linux），默认为 `false`。
 
 ```shell
 --dark-mode
 ```
+
+在 Linux 上黑暗模式经由 WebKitGTK 实现，页面是否真正渲染为暗色还取决于 WebKitGTK 是否尊重窗口主题以及站点是否实现了 `prefers-color-scheme: dark`。
 
 #### [disabled-web-shortcuts]
 
@@ -258,6 +262,19 @@ pake https://github.com --name GitHub
 --internal-url-regex "^https://(app|api)\\.example\\.com"
 ```
 
+#### [safe-domain]
+
+更简单地把可信域名及其子域名保留在应用内打开。适合工作区回调和企业 SSO 登录流程，例如 Slack 加 Okta。Pake 会把这个列表编译成 `internal_url_regex`；如果同时设置了 `--internal-url-regex`，则以显式正则为准。
+
+`--safe-domain` 只匹配 URL 的 host，不会因为路径或查询参数里出现域名就误判为内部链接。
+
+```shell
+--safe-domain <domains>
+
+# 将 Slack 和 Okta 的认证跳转保留在应用内
+--safe-domain slack.com,okta.com
+```
+
 #### [multi-arch]
 
 设置打包结果同时支持 Intel 和 M1 芯片，仅适用于 macOS，默认为 `false`。
@@ -289,7 +306,7 @@ pake https://github.com --name GitHub
 
 - **Linux**: `deb`, `appimage`, `rpm`, `zst`, `deb-arm64`, `appimage-arm64`, `rpm-arm64`, `zst-arm64`（默认：`deb`, `appimage`）
 - **Windows**: `x64`, `arm64`（未指定时自动检测）
-- **macOS**: `intel`, `apple`, `universal`（未指定时自动检测）
+- **macOS**: `intel`, `apple`, `universal`（架构，未指定时自动检测）；`app`, `dmg`（输出格式，默认：`dmg`）
 
 ```shell
 --targets <target>
@@ -300,6 +317,8 @@ pake https://github.com --name GitHub
 --targets universal      # macOS 通用版本（Intel + Apple Silicon）
 --targets apple          # 仅 macOS Apple Silicon
 --targets intel          # 仅 macOS Intel
+--targets app            # 仅 macOS 应用包（.app，跳过 DMG 步骤）
+--targets dmg            # macOS DMG 安装包（默认）
 --targets deb            # Linux DEB 包（x64）
 --targets rpm            # Linux RPM 包（x64）
 --targets appimage       # Linux AppImage（x64）

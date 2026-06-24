@@ -38,7 +38,7 @@ export interface PakeCliOptions {
   // App version, the same as package.json version, default 1.0.0
   appVersion: string;
 
-  // Force Mac to use dark mode, default false
+  // Force app to use dark mode (supports macOS, Windows, and Linux), default false
   darkMode: boolean;
 
   // Disable web shortcuts, default false
@@ -107,6 +107,9 @@ export interface PakeCliOptions {
 
   // Regex pattern to match URLs that should be considered internal
   internalUrlRegex: string;
+
+  // Comma-separated domains kept inside the app, compiled into internalUrlRegex, default empty
+  safeDomain: string;
 
   // Enable in-page Find UI and Cmd/Ctrl+F/G shortcuts, default false
   enableFind: boolean;

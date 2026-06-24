@@ -111,6 +111,7 @@ After build, confirm:
 | `--multi-instance`            | false   | Allow multiple app instances                 |
 | `--multi-window`              | false   | Multiple windows in one instance             |
 | `--new-window`                | false   | Allow popup windows (needed for OAuth flows) |
+| `--safe-domain <domains>`     | none    | Keep trusted SSO/workspace domains in-app    |
 | `--incognito`                 | false   | Private browsing mode                        |
 | `--dark-mode`                 | false   | Force macOS dark mode                        |
 | `--zoom <number>`             | 100     | Initial zoom level (50-200)                  |
@@ -135,6 +136,22 @@ After build, confirm:
 ### Chrome Extensions
 
 Not supported. Pake uses system WebView (WKWebView on macOS, WebView2 on Windows, WebKitGTK on Linux), not a full Chrome browser. Use `--inject` to add custom JS/CSS as an alternative.
+
+### Linux Wayland Input Issues
+
+If an AppImage opens but buttons cannot be clicked or keyboard input does not reach the page on a pure Wayland compositor, especially niri, first rebuild with the latest `pake-cli`. Then try the native WebKit path:
+
+```bash
+PAKE_LINUX_WEBKIT_SAFE_MODE=0 ./YourApp.AppImage
+```
+
+If that produces a blank window on the same system, re-enable the conservative WebKit workaround:
+
+```bash
+PAKE_LINUX_WEBKIT_SAFE_MODE=1 ./YourApp.AppImage
+```
+
+Do not diagnose this from GTK, appindicator, or GStreamer warnings alone; those can be optional runtime warnings unrelated to the input failure.
 
 ## Common Patterns
 
