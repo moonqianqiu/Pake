@@ -130,6 +130,22 @@
         <td><img src=https://raw.githubusercontent.com/tw93/static/main/pake/Excalidraw.png width=600/></td>
         <td><img src=https://raw.githubusercontent.com/tw93/static/main/pake/XiaoHongShu.png width=600/></td>
     </tr>
+    <tr>
+        <td>Notion
+            <a href="https://github.com/tw93/Pake/releases/latest/download/Notion.dmg">Mac</a>
+            <a href="https://github.com/tw93/Pake/releases/latest/download/Notion_x64.msi">Windows</a>
+            <a href="https://github.com/tw93/Pake/releases/latest/download/Notion_x86_64.deb">Linux</a>
+        </td>
+        <td>Flomo
+            <a href="https://github.com/tw93/Pake/releases/latest/download/Flomo.dmg">Mac</a>
+            <a href="https://github.com/tw93/Pake/releases/latest/download/Flomo_x64.msi">Windows</a>
+            <a href="https://github.com/tw93/Pake/releases/latest/download/Flomo_x86_64.deb">Linux</a>
+        </td>
+    </tr>
+    <tr>
+        <td><img src=https://raw.githubusercontent.com/tw93/static/main/pake/Notion.png width=600/></td>
+        <td><img src=https://raw.githubusercontent.com/tw93/static/main/pake/Flomo.png width=600/></td>
+    </tr>
 </table>
 
 <details>
@@ -154,8 +170,9 @@
 | <kbd>⌘</kbd> + <kbd>⇧</kbd> + <kbd>H</kbd>                | <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>H</kbd>   | 回到首页            |
 | <kbd>⌘</kbd> + <kbd>⌥</kbd> + <kbd>I</kbd>                | <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>I</kbd>   | 开启调试 (仅开发版) |
 | <kbd>⌘</kbd> + <kbd>⇧</kbd> + <kbd>⌫</kbd>                | <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Del</kbd> | 清除缓存并重启      |
+| <kbd>⌃</kbd> + <kbd>⌘</kbd> + <kbd>F</kbd>                | <kbd>F11</kbd>                                      | 切换原生全屏        |
 
-此外还支持双击头部全屏切换，拖拽头部移动窗口，Mac 用户支持手势返回和前进，新菜单也提供了导航、缩放和窗口控制等选项。
+此外还支持双击头部全屏切换。Windows 和 Linux 可使用 `--hide-window-decorations` 创建带顶部拖拽区域的无边框窗口。Mac 用户支持手势返回和前进，新菜单也提供了导航、缩放和窗口控制等选项。
 
 </details>
 
@@ -175,6 +192,14 @@ pake https://weekly.tw93.fun --name Weekly --icon https://cdn.tw93.fun/pake/week
 ```
 
 首次打包需要安装环境会比较慢，后续很快。完整参数说明查看 [CLI 使用指南](docs/cli-usage_CN.md)，不想用命令行可以试试 [GitHub Actions 在线构建](docs/github-actions-usage_CN.md)。
+
+在脚本或 AI agent 里使用 Pake？加 `--json` 获得机器可读结果，用 `--config app.json` 声明式描述应用（[schema](schema/pake.schema.json)），本地构建产物可直接 `pake ./dist --name MyTool` 打包。完整 agent 契约见 [llms.txt](llms.txt)。Claude Code 用户可通过 `/plugin marketplace add tw93/Pake` 和 `/plugin install pake@pake` 安装官方 skill。
+
+把下面这段复制给你的 AI agent 即可开始：
+
+```text
+用 Pake（npm i -g pake-cli）把网页打包成桌面应用。先阅读 https://unpkg.com/pake-cli@latest/llms.txt，运行 pake 时始终加 --json 并把 stdout 解析为单个 JSON 对象。把 <url-or-local-dist> 打包成名为 <AppName> 的应用。
+```
 
 ## 定制开发
 

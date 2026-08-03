@@ -9,8 +9,10 @@ Common issues and solutions when using Pake.
 - [Build Issues](#build-issues)
   - [Rust Version Error: "feature 'edition2024' is required"](#rust-version-error-feature-edition2024-is-required)
   - [Linux: Build Error "Can't detect any appindicator library" on Ubuntu 24.04](#linux-build-error-cant-detect-any-appindicator-library-on-ubuntu-2404)
+  - [Linux: Installing on Fedora / RHEL / Oracle Linux (RPM-based distros)](#linux-installing-on-fedora--rhel--oracle-linux-rpm-based-distros)
   - [Linux: AppImage Build Fails with "failed to run linuxdeploy"](#linux-appimage-build-fails-with-failed-to-run-linuxdeploy)
   - [Linux: AppImage Crashes at Launch with WebKitNetworkProcess Not Found](#linux-appimage-crashes-at-launch-with-webkitnetworkprocess-not-found)
+  - [Linux: AppImage Opens but Buttons or Keyboard Do Not Work on Wayland](#linux-appimage-opens-but-buttons-or-keyboard-do-not-work-on-wayland)
   - [Linux: "cargo: command not found" After Installing Rust](#linux-cargo-command-not-found-after-installing-rust)
   - [Windows: Installation Timeout During First Build](#windows-installation-timeout-during-first-build)
   - [Windows: Missing Visual Studio Build Tools](#windows-missing-visual-studio-build-tools)
@@ -19,6 +21,7 @@ Common issues and solutions when using Pake.
   - [App Window is Too Small/Large](#app-window-is-too-smalllarge)
   - [App Icon Not Showing Correctly](#app-icon-not-showing-correctly)
   - [Website Features Not Working (Login, Upload, etc.)](#website-features-not-working-login-upload-etc)
+  - [App Uses More Memory Than Expected](#app-uses-more-memory-than-expected)
 - [Installation Issues](#installation-issues)
   - [Permission Denied When Installing Globally](#permission-denied-when-installing-globally)
 - [Getting Help](#getting-help)
@@ -98,6 +101,46 @@ Install the correct dependency:
 sudo apt-get update
 sudo apt-get install -y libayatana-appindicator3-dev
 ```
+
+---
+
+### Linux: Installing on Fedora / RHEL / Oracle Linux (RPM-based distros)
+
+**Problem:**
+On RPM-based distros (Fedora, RHEL, Oracle Linux, Rocky, AlmaLinux, openSUSE) a
+`.deb` package cannot be installed by the system package manager, and older Pake
+versions always built a `.deb` first.
+
+**Solution:**
+
+Pake now picks the default bundle target from `/etc/os-release`: RPM-based
+distros default to `rpm, appimage`, while Debian/Ubuntu keep `deb, appimage`. So
+the basic command already produces an installable package:
+
+```bash
+pake https://github.com --name GitHub
+sudo dnf install ./GitHub.rpm   # or: sudo rpm -i ./GitHub.rpm
+```
+
+You can also choose the format explicitly at any time:
+
+```bash
+pake https://github.com --name GitHub --targets rpm        # RPM package
+pake https://github.com --name GitHub --targets appimage   # portable AppImage
+```
+
+When several targets build (the default), one format failing no longer aborts
+the others: if the `.rpm`/`.deb` bundler fails, the AppImage is still produced as
+a portable fallback. AppImage runs without installation:
+
+```bash
+chmod +x ./GitHub.AppImage
+./GitHub.AppImage
+```
+
+> Building an `.rpm` requires `rpm-build` (`sudo dnf install rpm-build`). If you
+> only need a runnable app without packaging, add `--keep-binary` to also copy
+> the raw executable next to the installer.
 
 ---
 
@@ -397,7 +440,7 @@ Specify custom dimensions when building:
 pake https://example.com --width 1200 --height 800
 ```
 
-See [CLI Usage Guide](cli-usage.md#window-options) for all window options.
+See [CLI Usage Guide](cli-usage.md#width) for all window options.
 
 ---
 
@@ -483,6 +526,8 @@ This is usually due to web compatibility issues. Try:
 
    Some authentication providers, especially Google, may block sign-in inside embedded webviews. Because Pake packages sites into a desktop webview, Google properties or sites that rely on Google OAuth may still fail to sign in even when `--new-window` or `--multi-window` is enabled. This is provider policy, not a packaging bug. In those cases, use the normal browser, a browser-installed app, or a native desktop client.
 
+   On macOS, Pake keeps **Sign in with Apple** popup flows (e.g. Yelp, Upwork) on the native popup path so Apple's callback can return to the opener page. Other auth popups may still be navigated in the current window to avoid WebKit crashes. If a provider blocks embedded webviews or the login still fails, use the normal browser, a browser-installed app, or a native desktop client.
+
 5. **WeChat Web login environment error**
 
    WeChat detects the WebView and writes a flag cookie that blocks subsequent logins. Add `--incognito` when packaging to bypass it, at the cost of requiring a QR scan on every launch:
@@ -490,6 +535,21 @@ This is usually due to web compatibility issues. Try:
    ```bash
    pake https://wx.qq.com --name WeChat --incognito
    ```
+
+6. **Cloudflare or bot-verification loops forever**
+
+   Some sites (e.g. ChatGPT) put a Cloudflare challenge in front of the page. The system WebView, especially WebKitGTK on Linux, is often flagged by these challenges and loops without passing, even with a custom `--user-agent`. This is the challenge provider detecting a non-standard browser engine, not a Pake bug, and there is no reliable Pake-side workaround. Use the site in a regular browser or a native client when it gates behind such a check.
+
+---
+
+### App Uses More Memory Than Expected
+
+**Problem:**
+The app spawns a WebKitWebProcess (Linux) or WebContent process (macOS) that uses several hundred MB of RAM, which seems to contradict the "~5MB" figure.
+
+**Explanation:**
+
+The ~5MB number is the installer/app size on disk, not runtime memory. At runtime Pake renders through your system WebView (WebKitWebProcess on Linux, WKWebView on macOS), and that process's memory is governed by the engine and the page you load, not by Pake. A heavy SPA like Gemini, Slack, or ChatGPT uses a comparable amount opening in any WebKitGTK browser such as GNOME Web. Pake adds very little on top of the WebView, so there is no Pake-side setting that meaningfully lowers it. This is inherent to using the system WebView and is the trade-off for the small binary size.
 
 ---
 

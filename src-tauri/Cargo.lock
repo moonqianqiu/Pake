@@ -2564,8 +2564,10 @@ dependencies = [
 
 [[package]]
 name = "pake"
-version = "3.12.1"
+version = "3.15.5"
 dependencies = [
+ "block2",
+ "dispatch",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
@@ -2582,6 +2584,8 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tauri-plugin-window-state",
  "tokio",
+ "webview2-com",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

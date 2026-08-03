@@ -1,7 +1,12 @@
 use crate::app::config::PakeConfig;
 use crate::util::{
-    check_file_or_append, get_data_dir, get_download_message_with_lang, show_toast, MessageType,
+    check_file_or_append, get_data_dir, get_download_message_with_lang, sanitize_download_filename,
+    show_toast, MessageType,
 };
+#[cfg(target_os = "macos")]
+use dispatch::Queue;
+#[cfg(target_os = "windows")]
+use std::{os::windows::ffi::OsStrExt, ptr, sync::OnceLock};
 use std::{
     path::PathBuf,
     str::FromStr,
@@ -10,6 +15,12 @@ use std::{
 use tauri::{
     webview::{DownloadEvent, NewWindowFeatures, NewWindowResponse},
     AppHandle, Config, Manager, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+};
+
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::UI::{
+    Shell::ExtractIconExW,
+    WindowsAndMessaging::{SendMessageW, ICON_BIG, WM_SETICON},
 };
 
 use tauri::Theme;
@@ -68,6 +79,77 @@ pub fn open_additional_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     build_window_with_label(app, &state.pake_config, &state.tauri_config, &label)
 }
 
+#[cfg(target_os = "windows")]
+fn taskbar_icon_handle() -> Option<isize> {
+    static TASKBAR_ICON: OnceLock<Option<isize>> = OnceLock::new();
+
+    *TASKBAR_ICON.get_or_init(|| {
+        let executable = match std::env::current_exe() {
+            Ok(path) => path,
+            Err(error) => {
+                eprintln!(
+                    "[Pake] Failed to resolve the app executable for its taskbar icon: {error}"
+                );
+                return None;
+            }
+        };
+        let executable_wide: Vec<u16> = executable
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let mut large_icon = ptr::null_mut();
+        let extracted = unsafe {
+            ExtractIconExW(
+                executable_wide.as_ptr(),
+                0,
+                &mut large_icon,
+                ptr::null_mut(),
+                1,
+            )
+        };
+        if extracted == 0 || large_icon.is_null() {
+            eprintln!(
+                "[Pake] Failed to extract the taskbar icon from {}.",
+                executable.display()
+            );
+            return None;
+        }
+
+        // WM_SETICON keeps this handle rather than copying it. Cache the single
+        // extracted icon for the process lifetime so repeated tray restores do
+        // not leak a new HICON or leave the window with a dangling handle.
+        Some(large_icon as isize)
+    })
+}
+
+// Apps autostarted at Windows logon can register their icons before Explorer's
+// icon cache is ready (#1323). Re-assert both the small/title-bar icon and the
+// large taskbar icon whenever a window becomes visible.
+#[cfg(target_os = "windows")]
+pub fn reapply_window_icon(window: &WebviewWindow) {
+    if let Some(icon) = window.app_handle().default_window_icon().cloned() {
+        if let Err(error) = window.set_icon(icon) {
+            eprintln!("[Pake] Failed to re-apply the window icon: {error}");
+        }
+    }
+
+    let Some(taskbar_icon) = taskbar_icon_handle() else {
+        return;
+    };
+    match window.hwnd() {
+        Ok(hwnd) => unsafe {
+            SendMessageW(hwnd.0, WM_SETICON, ICON_BIG as usize, taskbar_icon);
+        },
+        Err(error) => {
+            eprintln!("[Pake] Failed to resolve the window handle for its taskbar icon: {error}");
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn reapply_window_icon(_window: &WebviewWindow) {}
+
 struct WindowBuildOptions<'a> {
     label: &'a str,
     url: WebviewUrl,
@@ -98,19 +180,27 @@ fn open_requested_window(
 
     let title = target_url.host_str().unwrap_or(target_url.as_str());
     let _ = window.set_title(title);
+    reapply_window_icon(&window);
     let _ = window.set_focus();
 
     Ok(window)
 }
 
+/// Open a multi-window clone of the home app. The window is built hidden and
+/// revealed on its first real page load (see `lib.rs` on_page_load) so Cmd+N
+/// does not flash an empty shell the way the main window used to.
 pub fn open_additional_window_safe(app: &AppHandle) {
     #[cfg(target_os = "windows")]
     {
         let app_handle = app.clone();
         std::thread::spawn(move || {
             if let Ok(window) = open_additional_window(&app_handle) {
-                let _ = window.show();
-                let _ = window.set_focus();
+                // Fallback if PageLoadEvent::Finished never arrives.
+                let fallback = window.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(3_000)).await;
+                    reveal_built_window(&fallback);
+                });
             }
         });
     }
@@ -118,9 +208,71 @@ pub fn open_additional_window_safe(app: &AppHandle) {
     #[cfg(not(target_os = "windows"))]
     {
         if let Ok(window) = open_additional_window(app) {
-            let _ = window.show();
-            let _ = window.set_focus();
+            let fallback = window.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(tokio::time::Duration::from_millis(3_000)).await;
+                reveal_built_window(&fallback);
+            });
         }
+    }
+}
+
+/// Show a window that was built hidden once content is ready (or the fallback
+/// timer fires). No-ops when already visible so page-load and fallback can race.
+pub fn reveal_built_window(window: &WebviewWindow) {
+    if window.is_visible().unwrap_or(true) {
+        return;
+    }
+    let _ = window.show();
+    reapply_window_icon(window);
+    let _ = window.set_focus();
+}
+
+/// True when any Pake webview window is currently visible.
+pub fn any_app_window_visible(app: &AppHandle) -> bool {
+    app.webview_windows()
+        .values()
+        .any(|window| window.is_visible().unwrap_or(false))
+}
+
+/// Hide every webview window (main + multi-window clones). Used by tray Hide
+/// and the activation shortcut so secondary windows are not left on screen.
+pub fn hide_all_app_windows(app: &AppHandle) {
+    for window in app.webview_windows().values() {
+        let _ = window.hide();
+    }
+}
+
+/// Show every webview window, reassert icons, and focus the main window.
+pub fn show_all_app_windows(app: &AppHandle, init_fullscreen: bool) {
+    let windows = app.webview_windows();
+    for window in windows.values() {
+        let _ = window.unminimize();
+        let _ = window.show();
+        reapply_window_icon(window);
+        #[cfg(target_os = "linux")]
+        if init_fullscreen && !window.is_fullscreen().unwrap_or(false) {
+            let _ = window.set_fullscreen(true);
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = init_fullscreen;
+
+    if let Some(main) = windows.get("pake") {
+        let _ = main.set_focus();
+    } else if let Some(any) = windows.values().next() {
+        let _ = any.set_focus();
+    }
+}
+
+/// Tray-click / activation-shortcut toggle: hide all if anything is visible,
+/// otherwise show all. Cancels startup reveal when the caller has already done
+/// so; this helper only touches visibility.
+pub fn toggle_all_app_windows(app: &AppHandle, init_fullscreen: bool) {
+    if any_app_window_visible(app) {
+        hide_all_app_windows(app);
+    } else {
+        show_all_app_windows(app, init_fullscreen);
     }
 }
 
@@ -195,6 +347,27 @@ fn build_window(
             "pake.json must define at least one window configuration",
         ))
     })?;
+
+    #[cfg(target_os = "macos")]
+    let cert_bypass_target = if label == "pake"
+        && window_config.ignore_certificate_errors
+        && window_config.url_type == "web"
+    {
+        Url::parse(&window_config.url).ok()
+    } else {
+        None
+    };
+
+    // The delegate must be installed before the first TLS challenge. Start on
+    // a neutral page, then navigate from the with_webview callback below.
+    #[cfg(target_os = "macos")]
+    let url = if cert_bypass_target.is_some() {
+        WebviewUrl::CustomProtocol(
+            Url::parse("about:blank").expect("about:blank must be a valid URL"),
+        )
+    } else {
+        url
+    };
 
     let user_agent = config.user_agent.get();
 
@@ -289,9 +462,17 @@ fn build_window(
     // any script that reads it (e.g. fullscreen polyfill checks for an opt-out
     // flag), and toast must register `window.pakeToast` before Rust code
     // calls show_toast().
+    window_builder = window_builder.initialization_script(&config_script);
+
+    // find.js is opt-in via --enable-find and no-ops at runtime when disabled,
+    // so only inject its ~700 lines when the feature is on. Avoids parsing the
+    // find UI on every page load in the common (find-off) case. Matches the
+    // enable_find gating already applied to the Find menu item.
+    if window_config.enable_find {
+        window_builder = window_builder.initialization_script(include_str!("../inject/find.js"));
+    }
+
     window_builder = window_builder
-        .initialization_script(&config_script)
-        .initialization_script(include_str!("../inject/find.js"))
         .initialization_script(include_str!("../inject/toast.js"))
         .initialization_script(include_str!("../inject/fullscreen.js"))
         .initialization_script(include_str!("../inject/event.js"))
@@ -315,11 +496,6 @@ fn build_window(
         #[cfg(target_os = "linux")]
         {
             linux_browser_args.push_str(" --ignore-certificate-errors");
-        }
-
-        #[cfg(target_os = "macos")]
-        {
-            window_builder = window_builder.additional_browser_args("--ignore-certificate-errors");
         }
     }
 
@@ -370,6 +546,10 @@ fn build_window(
     #[cfg(not(target_os = "macos"))]
     {
         window_builder = window_builder.data_directory(_data_dir).theme(theme);
+
+        if window_config.hide_window_decorations {
+            window_builder = window_builder.decorations(false);
+        }
 
         if !config.proxy_url.is_empty() {
             if let Ok(proxy_url) = Url::from_str(&config.proxy_url) {
@@ -440,7 +620,7 @@ fn build_window(
     // catching it here is independent of the page CSP and the IPC channel.
     {
         let download_handle = app.clone();
-        window_builder = window_builder.on_download(move |_webview, event| match event {
+        window_builder = window_builder.on_download(move |webview, event| match event {
             DownloadEvent::Requested { url, destination } => {
                 match download_handle.path().download_dir() {
                     Ok(download_dir) => {
@@ -456,7 +636,7 @@ fn build_window(
                             })
                             .unwrap_or_else(|| "download".to_string());
 
-                        let target = download_dir.join(filename);
+                        let target = download_dir.join(sanitize_download_filename(&filename));
                         if let Some(path_str) = target.to_str() {
                             *destination = PathBuf::from(check_file_or_append(path_str));
                         }
@@ -472,7 +652,12 @@ fn build_window(
                 path: _,
                 success,
             } => {
-                if let Some(window) = download_handle.get_webview_window("pake") {
+                // Toast on the window that started the download (including
+                // secondary multi-window labels), not a hard-coded "pake".
+                let toast_window = download_handle
+                    .get_webview_window(webview.label())
+                    .or_else(|| download_handle.get_webview_window("pake"));
+                if let Some(window) = toast_window {
                     let message_type = if success {
                         MessageType::Success
                     } else {
@@ -488,7 +673,35 @@ fn build_window(
 
     window_builder = window_builder.on_navigation(|_| true);
 
-    window_builder.build()
+    let window = window_builder.build()?;
+
+    // macOS WKWebView ignores the Chromium --ignore-certificate-errors flag, so
+    // install a host-scoped delegate on the process-lifetime main window only.
+    // Queue setup after construction so wry cannot replace the proxy while it
+    // finishes initializing its own navigation delegate.
+    #[cfg(target_os = "macos")]
+    if let Some(target_url) = cert_bypass_target {
+        let allowed_host = target_url
+            .host_str()
+            .expect("web URLs must have a host")
+            .to_owned();
+        let cert_window = window.clone();
+        Queue::main().exec_async(move || {
+            if let Err(error) = cert_window.with_webview(move |webview| {
+                if !crate::app::cert::install_cert_bypass_and_navigate(
+                    webview.inner(),
+                    allowed_host,
+                    target_url.to_string(),
+                ) {
+                    eprintln!("[Pake] Failed to configure macOS certificate bypass.");
+                }
+            }) {
+                eprintln!("[Pake] Failed to access the macOS webview: {error}");
+            }
+        });
+    }
+
+    Ok(window)
 }
 
 #[cfg(all(test, target_os = "windows"))]

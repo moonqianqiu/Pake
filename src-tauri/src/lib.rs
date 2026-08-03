@@ -2,14 +2,20 @@
 mod app;
 mod util;
 
-use tauri::Manager;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use tauri::{webview::PageLoadEvent, Manager, Url, WebviewWindow};
 use tauri_plugin_window_state::Builder as WindowStatePlugin;
 use tauri_plugin_window_state::StateFlags;
 
 #[cfg(target_os = "macos")]
 use std::time::Duration;
 
-const WINDOW_SHOW_DELAY: u64 = 50;
+// Fallback when PageLoadEvent::Finished never arrives (offline / stalled).
+// Deliberately longer than a paint tick so the normal path can win first.
+const STARTUP_WINDOW_FALLBACK_DELAY: u64 = 3_000;
 #[cfg(target_os = "linux")]
 const PAKE_LINUX_WEBKIT_SAFE_MODE: &str = "PAKE_LINUX_WEBKIT_SAFE_MODE";
 #[cfg(target_os = "linux")]
@@ -22,12 +28,64 @@ const GDK_BACKEND: &str = "GDK_BACKEND";
 use app::{
     invoke::{
         clear_dock_badge, download_file, increment_dock_badge, send_notification, set_dock_badge,
-        set_dock_badge_label, update_theme_mode,
+        set_dock_badge_label, set_zoom, update_theme_mode, webview_navigate,
     },
     setup::{set_global_shortcut, set_system_tray},
-    window::{open_additional_window_safe, set_window, MultiWindowState},
+    window::{
+        open_additional_window_safe, reapply_window_icon, reveal_built_window, set_window,
+        MultiWindowState,
+    },
 };
 use util::get_pake_config;
+
+/// Placeholder documents used before the real target URL navigates (e.g. macOS
+/// cert-bypass starts on about:blank). Revealing on these would reintroduce the
+/// blank-window flash the page-load gate is meant to prevent.
+fn is_placeholder_startup_url(url: &Url) -> bool {
+    url.scheme().eq_ignore_ascii_case("about")
+}
+
+/// First automatic reveal wins. Returns true if the caller should show the window.
+fn claim_startup_reveal(revealed: &AtomicBool) -> bool {
+    !revealed.swap(true, Ordering::AcqRel)
+}
+
+/// User took control of main-window visibility (tray, shortcut, dock, second
+/// instance, hide-on-close). Drop any pending page-load / fallback reveal so a
+/// slow cold start cannot re-open a window the user just hid.
+pub(crate) fn cancel_startup_reveal(revealed: &AtomicBool) {
+    revealed.store(true, Ordering::Release);
+}
+
+fn reveal_startup_window(window: WebviewWindow, init_fullscreen: bool, revealed: &Arc<AtomicBool>) {
+    if !claim_startup_reveal(revealed) {
+        return;
+    }
+
+    tauri::async_runtime::spawn(async move {
+        let _ = window.show();
+        reapply_window_icon(&window);
+
+        // Fixed: Linux fullscreen issue with virtual keyboard
+        #[cfg(target_os = "linux")]
+        {
+            if init_fullscreen {
+                let _ = window.set_fullscreen(true);
+                // Ensure webview maintains focus for input after fullscreen
+                let _ = window.set_focus();
+            } else {
+                // Fix: Ubuntu 24.04/GNOME window buttons non-functional until resize (#1122)
+                // The window manager needs time to process the MapWindow event before
+                // accepting focus requests. Without this, decorations remain non-interactive.
+                tokio::time::sleep(tokio::time::Duration::from_millis(30)).await;
+                let _ = window.set_focus();
+            }
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        let _ = init_fullscreen;
+    });
+}
 
 #[cfg(any(target_os = "linux", test))]
 fn is_disabled_env_value(value: &str) -> bool {
@@ -149,13 +207,16 @@ pub fn run_app() {
     let multi_instance = pake_config.multi_instance;
     let multi_window = pake_config.multi_window;
     let _enable_find = pake_config.windows[0].enable_find;
+    let startup_window_revealed = Arc::new(AtomicBool::new(false));
 
     let window_state_plugin = WindowStatePlugin::default()
         .with_state_flags(if init_fullscreen {
             StateFlags::FULLSCREEN
         } else {
             // Prevent flickering on the first open.
-            StateFlags::all() & !StateFlags::VISIBLE
+            // Exclude FULLSCREEN so a prior --fullscreen build's persisted state
+            // doesn't force fullscreen on a rebuild without --fullscreen.
+            StateFlags::all() & !StateFlags::VISIBLE & !StateFlags::FULLSCREEN
         })
         .build();
 
@@ -170,18 +231,64 @@ pub fn run_app() {
 
     // Only add single instance plugin if multiple instances are not allowed
     if !multi_instance {
+        let instance_revealed = startup_window_revealed.clone();
         app_builder = app_builder.plugin(tauri_plugin_single_instance::init(
             move |app, _args, _cwd| {
                 if multi_window {
                     open_additional_window_safe(app);
                 } else if let Some(window) = app.get_webview_window("pake") {
+                    cancel_startup_reveal(&instance_revealed);
                     let _ = window.unminimize();
                     let _ = window.show();
+                    reapply_window_icon(&window);
                     let _ = window.set_focus();
                 }
             },
         ));
     }
+
+    // Reveal hidden windows after the first real document finishes loading so
+    // slow WKWebView cold starts do not expose an empty but interactive shell.
+    // - Main label "pake": once-only latch + start_to_tray opt-out.
+    // - Secondary multi-window labels ("pake-N"): reveal if still hidden (Cmd+N).
+    // start_to_tray keeps the main window hidden until the user opens it.
+    {
+        let page_load_revealed = startup_window_revealed.clone();
+        app_builder = app_builder.on_page_load(move |webview, payload| {
+            if !matches!(payload.event(), PageLoadEvent::Finished) {
+                return;
+            }
+            // Skip about:blank (and other about: placeholders) used by the macOS
+            // cert-bypass path before the real target URL navigates.
+            if is_placeholder_startup_url(payload.url()) {
+                return;
+            }
+
+            let label = webview.label();
+            if label == "pake" {
+                if start_to_tray {
+                    return;
+                }
+                if let Some(window) = webview.app_handle().get_webview_window("pake") {
+                    reveal_startup_window(window, init_fullscreen, &page_load_revealed);
+                }
+                return;
+            }
+
+            // Multi-window clones (pake-1, pake-2, …) built hidden by
+            // open_additional_window_safe.
+            if label.starts_with("pake-") {
+                if let Some(window) = webview.app_handle().get_webview_window(label) {
+                    reveal_built_window(&window);
+                }
+            }
+        });
+    }
+
+    // Clone before setup moves the Arc into tray / shortcut / fallback handlers.
+    let close_revealed = startup_window_revealed.clone();
+    #[cfg(target_os = "macos")]
+    let reopen_revealed = startup_window_revealed.clone();
 
     app_builder
         .invoke_handler(tauri::generate_handler![
@@ -192,6 +299,8 @@ pub fn run_app() {
             set_dock_badge_label,
             clear_dock_badge,
             update_theme_mode,
+            set_zoom,
+            webview_navigate,
         ])
         .setup(move |app| {
             app.manage(MultiWindowState::new(
@@ -218,33 +327,30 @@ pub fn run_app() {
                 &pake_config.system_tray_path,
                 init_fullscreen,
                 multi_window,
+                startup_window_revealed.clone(),
             )?;
-            set_global_shortcut(app.app_handle(), activation_shortcut, init_fullscreen)?;
+            set_global_shortcut(
+                app.app_handle(),
+                activation_shortcut,
+                init_fullscreen,
+                startup_window_revealed.clone(),
+            )?;
 
             // Show window after state restoration to prevent position flashing
-            // Unless start_to_tray is enabled, then keep it hidden
+            // once its first page finishes. A fallback keeps offline or stalled
+            // pages reachable without exposing a blank webview during normal startup.
             if !start_to_tray {
                 let window_clone = window.clone();
                 tauri::async_runtime::spawn(async move {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(WINDOW_SHOW_DELAY)).await;
-                    let _ = window_clone.show();
-
-                    // Fixed: Linux fullscreen issue with virtual keyboard
-                    #[cfg(target_os = "linux")]
-                    {
-                        if init_fullscreen {
-                            let _ = window_clone.set_fullscreen(true);
-                            // Ensure webview maintains focus for input after fullscreen
-                            let _ = window_clone.set_focus();
-                        } else {
-                            // Fix: Ubuntu 24.04/GNOME window buttons non-functional until resize (#1122)
-                            // The window manager needs time to process the MapWindow event before
-                            // accepting focus requests. Without this, decorations remain non-interactive.
-                            tokio::time::sleep(tokio::time::Duration::from_millis(30)).await;
-                            let _ = window_clone.set_focus();
-                        }
-                    }
+                    tokio::time::sleep(tokio::time::Duration::from_millis(
+                        STARTUP_WINDOW_FALLBACK_DELAY,
+                    ))
+                    .await;
+                    reveal_startup_window(window_clone, init_fullscreen, &startup_window_revealed);
                 });
+            } else {
+                // Tray/shortcut already hold clones that cancel user-driven toggles.
+                drop(startup_window_revealed);
             }
 
             Ok(())
@@ -252,6 +358,8 @@ pub fn run_app() {
         .on_window_event(move |_window, _event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = _event {
                 if hide_on_close && _window.label() == "pake" {
+                    // User dismissed the window; do not let startup reveal reopen it.
+                    cancel_startup_reveal(&close_revealed);
                     // Hide window when hide_on_close is enabled (regardless of tray status)
                     let window = _window.clone();
                     tauri::async_runtime::spawn(async move {
@@ -286,7 +394,7 @@ pub fn run_app() {
             eprintln!("[Pake] Fatal error while building Tauri application: {error}");
             std::process::exit(1);
         })
-        .run(|_app, _event| {
+        .run(move |_app, _event| {
             // Handle macOS dock icon click to reopen hidden window
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen {
@@ -296,7 +404,9 @@ pub fn run_app() {
             {
                 if !has_visible_windows {
                     if let Some(window) = _app.get_webview_window("pake") {
+                        cancel_startup_reveal(&reopen_revealed);
                         let _ = window.show();
+                        reapply_window_icon(&window);
                         let _ = window.set_focus();
                     }
                 }
@@ -311,6 +421,46 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn placeholder_startup_urls_cover_about_blank() {
+        let blank: Url = "about:blank".parse().unwrap();
+        let srcdoc: Url = "about:srcdoc".parse().unwrap();
+        let https: Url = "https://github.com/".parse().unwrap();
+        let tauri: Url = "tauri://localhost/".parse().unwrap();
+
+        assert!(is_placeholder_startup_url(&blank));
+        assert!(is_placeholder_startup_url(&srcdoc));
+        assert!(!is_placeholder_startup_url(&https));
+        assert!(!is_placeholder_startup_url(&tauri));
+    }
+
+    #[test]
+    fn first_claim_wins_startup_reveal() {
+        let revealed = AtomicBool::new(false);
+        assert!(claim_startup_reveal(&revealed));
+        assert!(!claim_startup_reveal(&revealed));
+    }
+
+    #[test]
+    fn user_show_then_hide_blocks_automatic_startup_reveal() {
+        // Slow page load: user opens from tray/shortcut, then hides again.
+        // Page-load finish and the 3s fallback must not reopen the window.
+        let revealed = AtomicBool::new(false);
+        cancel_startup_reveal(&revealed); // explicit show
+        cancel_startup_reveal(&revealed); // explicit hide
+        assert!(
+            !claim_startup_reveal(&revealed),
+            "automatic reveal must stay cancelled after user visibility control"
+        );
+    }
+
+    #[test]
+    fn cancel_before_any_claim_blocks_reveal() {
+        let revealed = AtomicBool::new(false);
+        cancel_startup_reveal(&revealed);
+        assert!(!claim_startup_reveal(&revealed));
+    }
 
     #[test]
     fn linux_webkit_safe_mode_stays_on_by_default() {

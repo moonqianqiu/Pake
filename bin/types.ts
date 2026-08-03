@@ -29,8 +29,11 @@ export interface PakeCliOptions {
   // Start window maximized, default false
   maximize: boolean;
 
-  // Enable immersive header, default false.
+  // Enable immersive header, default false. macOS only.
   hideTitleBar: boolean;
+
+  // Hide native window decorations, default false. Windows and Linux only.
+  hideWindowDecorations: boolean;
 
   // Enable windows always on top, default false
   alwaysOnTop: boolean;
@@ -69,6 +72,12 @@ export interface PakeCliOptions {
   // Debug mode, outputs more logs
   debug: boolean;
 
+  // Machine-readable mode: logs go to stderr, stdout carries one JSON result, default false
+  json: boolean;
+
+  // Path to a JSON config file whose fields mirror CLI options plus url
+  config?: string;
+
   /** External scripts that need to be injected into the page. */
   inject: string[];
 
@@ -89,6 +98,10 @@ export interface PakeCliOptions {
 
   // Enable drag and drop functionality, default false
   enableDragDrop: boolean;
+
+  // Build the executable without packaging it into an installer (Linux only),
+  // default true. Set false via --no-bundle for RPM distros where the bundler aborts.
+  bundle: boolean;
 
   // Keep raw binary file alongside installer, default false
   keepBinary: boolean;
@@ -155,6 +168,7 @@ export interface PlatformSpecific<T> {
 export interface WindowConfig {
   url: string;
   hide_title_bar: boolean;
+  hide_window_decorations: boolean;
   fullscreen: boolean;
   maximize: boolean;
   width: number;

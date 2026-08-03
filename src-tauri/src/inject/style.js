@@ -10,7 +10,7 @@ window.addEventListener("DOMContentLoaded", (_event) => {
     #Bottom > div.content > div.inner,
     #Rightbar .sep20:nth-of-type(5),
     #Rightbar > div.box:nth-child(4),
-    #Main > div.box:nth-child(8) > div
+    #Main > div.box:nth-child(8) > div,
     #Wrapper > div.sep20,
     #Main > div.box:nth-child(8),
     #masthead-ad,
@@ -403,6 +403,11 @@ window.addEventListener("DOMContentLoaded", (_event) => {
       padding-top: 0px;
     }
 
+    #notion-app .notion-sidebar,#notion-app .notion-topbar{
+      padding-top: 20px;
+      box-sizing: content-box;
+    }
+
     #header-area > div > .css-gtiexd > div:nth-child(1) > div, #header-area .logoIcon .user-info{
       padding-top: 20px;
     }
@@ -497,9 +502,29 @@ window.addEventListener("DOMContentLoaded", (_event) => {
     }
   `;
   const isMac = /Mac/i.test(navigator.userAgent);
-  if (window["pakeConfig"]?.hide_title_bar && isMac) {
+  if (hasImmersiveHeader(window["pakeConfig"])) {
     const topPaddingStyleElement = document.createElement("style");
-    topPaddingStyleElement.textContent = topPaddingCSS;
+    topPaddingStyleElement.textContent = isMac
+      ? topPaddingCSS
+      : `
+    #pake-top-dom:active {
+      cursor: grabbing;
+      cursor: -webkit-grabbing;
+    }
+
+    #pake-top-dom {
+      position: fixed;
+      background: transparent;
+      top: 0;
+      width: 100%;
+      height: 20px;
+      cursor: grab;
+      -webkit-app-region: drag;
+      user-select: none;
+      -webkit-user-select: none;
+      z-index: 99999;
+    }
+    `;
     document.head.appendChild(topPaddingStyleElement);
   }
 });

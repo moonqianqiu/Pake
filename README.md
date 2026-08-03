@@ -130,6 +130,22 @@
         <td><img src=https://raw.githubusercontent.com/tw93/static/main/pake/Excalidraw.png width=600/></td>
         <td><img src=https://raw.githubusercontent.com/tw93/static/main/pake/XiaoHongShu.png width=600/></td>
     </tr>
+    <tr>
+        <td>Notion
+            <a href="https://github.com/tw93/Pake/releases/latest/download/Notion.dmg">Mac</a>
+            <a href="https://github.com/tw93/Pake/releases/latest/download/Notion_x64.msi">Windows</a>
+            <a href="https://github.com/tw93/Pake/releases/latest/download/Notion_x86_64.deb">Linux</a>
+        </td>
+        <td>Flomo
+            <a href="https://github.com/tw93/Pake/releases/latest/download/Flomo.dmg">Mac</a>
+            <a href="https://github.com/tw93/Pake/releases/latest/download/Flomo_x64.msi">Windows</a>
+            <a href="https://github.com/tw93/Pake/releases/latest/download/Flomo_x86_64.deb">Linux</a>
+        </td>
+    </tr>
+    <tr>
+        <td><img src=https://raw.githubusercontent.com/tw93/static/main/pake/Notion.png width=600/></td>
+        <td><img src=https://raw.githubusercontent.com/tw93/static/main/pake/Flomo.png width=600/></td>
+    </tr>
 </table>
 
 <details>
@@ -153,8 +169,9 @@
 | <kbd>⌘</kbd> + <kbd>⇧</kbd> + <kbd>H</kbd>                | <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>H</kbd>   | Go to Home Page                     |
 | <kbd>⌘</kbd> + <kbd>⌥</kbd> + <kbd>I</kbd>                | <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>I</kbd>   | Toggle Developer Tools (Debug Only) |
 | <kbd>⌘</kbd> + <kbd>⇧</kbd> + <kbd>⌫</kbd>                | <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>Del</kbd> | Clear Cache & Restart               |
+| <kbd>⌃</kbd> + <kbd>⌘</kbd> + <kbd>F</kbd>                | <kbd>F11</kbd>                                      | Toggle native window fullscreen     |
 
-In addition, double-click the title bar to switch to full-screen mode. For Mac users, you can also use the gesture to go to the previous or next page and drag the title bar to move the window. The new menu also offers options for navigation, zoom, and window controls.
+In addition, double-click the title bar to switch to full-screen mode. On Windows and Linux, use `--hide-window-decorations` for a frameless window with a top drag region. For Mac users, you can also use the gesture to go to the previous or next page and drag the title bar to move the window. The new menu also offers options for navigation, zoom, and window controls.
 
 </details>
 
@@ -174,6 +191,14 @@ pake https://weekly.tw93.fun --name Weekly --icon https://cdn.tw93.fun/pake/week
 ```
 
 First-time packaging requires environment setup and may be slower, subsequent builds are fast. For complete parameter documentation, see [CLI Usage Guide](docs/cli-usage.md). Don't want to use CLI? Try [GitHub Actions Online Building](docs/github-actions-usage.md).
+
+Using Pake from a script or AI agent? Pass `--json` for machine-readable results, describe apps declaratively with `--config app.json` ([schema](schema/pake.schema.json)), and package local build output directly with `pake ./dist --name MyTool`. See [llms.txt](llms.txt) for the full agent contract. Claude Code users can install the official skill with `/plugin marketplace add tw93/Pake` and `/plugin install pake@pake`.
+
+Copy this to your AI agent to get started:
+
+```text
+Use Pake (npm i -g pake-cli) to package webpages as desktop apps. Read https://unpkg.com/pake-cli@latest/llms.txt first; always run pake with --json and parse stdout as a single JSON object. Package <url-or-local-dist> into an app named <AppName>.
+```
 
 ## Development
 
@@ -203,8 +228,7 @@ Pake's development can not be without these Hackers. They contributed a lot of c
 ## Support
 
 - The most direct way to support me is getting [Mole for Mac](https://mole.fit), my paid Mac cleanup app.
-- If Pake helped you, [share it](https://twitter.com/intent/tweet?url=https://github.com/tw93/Pake&text=Pake%20-%20Turn%20any%20webpage%20into%20a%20desktop%20app%20with%20one%20command.%20Nearly%2020x%20smaller%20than%20Electron%20packages,%20supports%20macOS%20Windows%20Linux) with friends or give it a star.
-- Got ideas or bugs? Open an issue or PR, feel free to contribute your best AI model.
+- If Pake helped you, give it a star, [share it](https://twitter.com/intent/tweet?url=https://github.com/tw93/Pake&text=Pake%20-%20Turn%20any%20webpage%20into%20a%20desktop%20app%20with%20one%20command.%20Nearly%2020x%20smaller%20than%20Electron%20packages,%20supports%20macOS%20Windows%20Linux), or open an issue or PR.
 - I have two cats, TangYuan and Coke. If you think Pake delights your life, you can feed them <a href="https://cats.tw93.fun?name=Pake" target="_blank">canned food 🥩</a>.
 
 <details>

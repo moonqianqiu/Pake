@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 function loadEventHelpers({
   withTauri = false,
   userAgent = "Mozilla/5.0",
+  initialZoom = null,
 } = {}) {
   const source = fs.readFileSync(
     path.join(process.cwd(), "src-tauri/src/inject/event.js"),
@@ -19,6 +20,10 @@ function loadEventHelpers({
   };
   const eventListeners = {};
   const elementsById = new Map();
+  const localStorageValues = new Map();
+  if (initialZoom !== null) {
+    localStorageValues.set("htmlZoom", initialZoom);
+  }
   const registerListener = (type, handler, options) => {
     eventListeners[type] = eventListeners[type] || [];
     eventListeners[type].push({ handler, options });
@@ -72,8 +77,10 @@ function loadEventHelpers({
         reload: () => {},
       },
       localStorage: {
-        getItem: () => null,
-        setItem: () => {},
+        getItem: (key) => localStorageValues.get(key) ?? null,
+        setItem: (key, value) => {
+          localStorageValues.set(key, value);
+        },
       },
       addEventListener: registerListener,
       dispatchEvent: () => {},
@@ -106,7 +113,7 @@ function loadEventHelpers({
   }
 
   runInNewContext(source, context);
-  return { ...context, eventListeners, invokeCalls };
+  return { ...context, eventListeners, invokeCalls, localStorageValues };
 }
 
 function runDomReady(context) {
@@ -139,6 +146,22 @@ function makeClickEvent(anchor) {
 }
 
 describe("event link guard", () => {
+  it("falls back from malformed saved zoom values", () => {
+    const context = loadEventHelpers({
+      withTauri: true,
+      initialZoom: "not-a-zoom",
+    });
+
+    context.zoomIn();
+    context.zoomOut();
+
+    expect(context.invokeCalls).toEqual([
+      ["set_zoom", { percent: 110 }],
+      ["set_zoom", { percent: 100 }],
+    ]);
+    expect(context.localStorageValues.get("htmlZoom")).toBe("100%");
+  });
+
   it("bypasses javascript pseudo-links", () => {
     const { shouldBypassPakeLinkHandling } = loadEventHelpers();
 
@@ -157,6 +180,180 @@ describe("event link guard", () => {
     expect(shouldBypassPakeLinkHandling("https://example.com/account")).toBe(
       false,
     );
+  });
+
+  it("navigates GitHub release pages instead of downloading them as documents", () => {
+    const context = loadEventHelpers({ withTauri: true });
+    context.window.location.href = "https://github.com/owner/repo/releases";
+    runDomReady(context);
+
+    const event = makeClickEvent(
+      makeAnchor("https://github.com/owner/repo/releases/tag/v1.28.3", "_self"),
+    );
+    getClickGuard(context)(event);
+
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(event.stopImmediatePropagation).not.toHaveBeenCalled();
+    expect(context.invokeCalls).not.toContainEqual([
+      "download_file",
+      expect.anything(),
+    ]);
+  });
+
+  it("still downloads files linked from GitHub releases", () => {
+    const context = loadEventHelpers({ withTauri: true });
+    context.window.location.href = "https://github.com/owner/repo/releases";
+    runDomReady(context);
+
+    const event = makeClickEvent(
+      makeAnchor(
+        "https://github.com/owner/repo/releases/download/v1.28.3/app.dmg",
+        "_self",
+      ),
+    );
+    getClickGuard(context)(event);
+
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(event.stopImmediatePropagation).toHaveBeenCalled();
+    expect(context.invokeCalls).toContainEqual([
+      "download_file",
+      {
+        params: {
+          url: "https://github.com/owner/repo/releases/download/v1.28.3/app.dmg",
+          filename: "app.dmg",
+          language: "en-US",
+        },
+      },
+    ]);
+  });
+
+  it("navigates SPA routes under /assets/ instead of treating them as downloads", () => {
+    const context = loadEventHelpers({ withTauri: true });
+    context.window.location.href = "https://www.mexc.com/";
+    context.window.location.origin = "https://www.mexc.com";
+    context.window.location.pathname = "/";
+    runDomReady(context);
+
+    const event = makeClickEvent(
+      makeAnchor("https://www.mexc.com/assets/future", "_self"),
+    );
+    getClickGuard(context)(event);
+
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(context.invokeCalls).not.toContainEqual([
+      "download_file",
+      expect.anything(),
+    ]);
+    expect(
+      context.isDownloadableFile("https://www.mexc.com/assets/future"),
+    ).toBe(false);
+  });
+
+  it("still downloads real files that live under /assets/ by extension", () => {
+    const { isDownloadableFile } = loadEventHelpers();
+
+    expect(
+      isDownloadableFile("https://cdn.example.com/assets/export/report.pdf"),
+    ).toBe(true);
+    expect(
+      isDownloadableFile("https://cdn.example.com/assets/pkg/app.zip"),
+    ).toBe(true);
+  });
+
+  it("keeps intentional download-path interception for extensionless /download/ links", () => {
+    const { isDownloadableFile } = loadEventHelpers();
+
+    expect(isDownloadableFile("https://example.com/download/export")).toBe(
+      true,
+    );
+    // Real files under /files/ still match by extension, not the path root.
+    expect(isDownloadableFile("https://example.com/files/report.pdf")).toBe(
+      true,
+    );
+  });
+
+  it("does not treat /files/ SPA routes without a file extension as downloads", () => {
+    const { isDownloadableFile } = loadEventHelpers();
+
+    expect(isDownloadableFile("https://drive.example.com/files/inbox")).toBe(
+      false,
+    );
+    expect(
+      isDownloadableFile("https://app.example.com/attachments/latest"),
+    ).toBe(false);
+  });
+
+  it("does not treat static /dist/ SPA paths as downloads without a file extension", () => {
+    const { isDownloadableFile } = loadEventHelpers();
+
+    expect(isDownloadableFile("https://example.com/dist/app")).toBe(false);
+  });
+
+  it("does not force-download ordinary links on Cmd/Ctrl+click", () => {
+    const context = loadEventHelpers({ withTauri: true });
+    runDomReady(context);
+
+    const event = makeClickEvent(
+      makeAnchor("https://example.com/app/settings", "_self"),
+    );
+    event.metaKey = true;
+    event.ctrlKey = true;
+    getClickGuard(context)(event);
+
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(context.invokeCalls).not.toContainEqual([
+      "download_file",
+      expect.anything(),
+    ]);
+  });
+
+  it("still downloads when the anchor has a download attribute", () => {
+    const context = loadEventHelpers({ withTauri: true });
+    runDomReady(context);
+
+    const anchor = makeAnchor("https://example.com/app/settings", "_self");
+    anchor.download = "settings.html";
+    const event = makeClickEvent(anchor);
+    getClickGuard(context)(event);
+
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(context.invokeCalls).toContainEqual([
+      "download_file",
+      {
+        params: {
+          url: "https://example.com/app/settings",
+          filename: "settings.html",
+          language: "en-US",
+        },
+      },
+    ]);
+  });
+
+  it("does not treat navigable web formats as downloads by extension alone", () => {
+    const { isDownloadableFile } = loadEventHelpers();
+
+    expect(isDownloadableFile("https://example.com/api/config.json")).toBe(
+      false,
+    );
+    expect(isDownloadableFile("https://example.com/docs/app.js")).toBe(false);
+    expect(isDownloadableFile("https://example.com/theme.css")).toBe(false);
+    // Binary / archive extensions still download.
+    expect(isDownloadableFile("https://example.com/report.pdf")).toBe(true);
+    expect(isDownloadableFile("https://example.com/pkg.zip")).toBe(true);
+  });
+
+  it("scopes root domains correctly for multi-part public suffixes", () => {
+    const { getRootDomain } = loadEventHelpers();
+
+    expect(getRootDomain("www.amazon.co.uk")).toBe("amazon.co.uk");
+    expect(getRootDomain("evil.co.uk")).toBe("evil.co.uk");
+    expect(getRootDomain("www.amazon.co.uk")).not.toBe(
+      getRootDomain("evil.co.uk"),
+    );
+    expect(getRootDomain("alice.github.io")).toBe("alice.github.io");
+    expect(getRootDomain("bob.github.io")).toBe("bob.github.io");
+    expect(getRootDomain("m.bilibili.com")).toBe("bilibili.com");
+    expect(getRootDomain("www.bilibili.com")).toBe("bilibili.com");
   });
 
   it("navigates macOS auth URLs in the current window", () => {
@@ -210,6 +407,88 @@ describe("event link guard", () => {
     expect(result).toBe(popup);
   });
 
+  it("keeps named Apple auth popups on the native popup path on macOS", () => {
+    const popup = {};
+    const { openAuthNavigation, window } = loadEventHelpers({
+      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_5)",
+    });
+    const openCalls = [];
+    const originalWindowOpen = (url, name, specs) => {
+      openCalls.push({ url, name, specs });
+      return popup;
+    };
+
+    const result = openAuthNavigation(
+      originalWindowOpen,
+      "https://example.com/apple/login",
+      "AppleAuthentication",
+      "width=1200,height=800",
+    );
+
+    expect(openCalls).toEqual([
+      {
+        url: "https://example.com/apple/login",
+        name: "AppleAuthentication",
+        specs: "width=1200,height=800",
+      },
+    ]);
+    expect(window.location.href).toBe("https://example.com/app");
+    expect(result).toBe(popup);
+  });
+
+  it("keeps appleid auth URL popups on the native popup path on macOS", () => {
+    const popup = {};
+    const { openAuthNavigation, window } = loadEventHelpers({
+      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_5)",
+    });
+    const openCalls = [];
+    const originalWindowOpen = (url, name, specs) => {
+      openCalls.push({ url, name, specs });
+      return popup;
+    };
+
+    const result = openAuthNavigation(
+      originalWindowOpen,
+      "https://appleid.apple.com/auth/authorize",
+      "_blank",
+      "width=1200,height=800",
+    );
+
+    expect(openCalls).toEqual([
+      {
+        url: "https://appleid.apple.com/auth/authorize",
+        name: "_blank",
+        specs: "width=1200,height=800",
+      },
+    ]);
+    expect(window.location.href).toBe("https://example.com/app");
+    expect(result).toBe(popup);
+  });
+
+  it("falls back to current-window navigation if an Apple auth popup is blocked", () => {
+    const { openAuthNavigation, window } = loadEventHelpers({
+      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_5)",
+    });
+    const originalWindowOpen = vi.fn(() => null);
+
+    const result = openAuthNavigation(
+      originalWindowOpen,
+      "https://appleid.apple.com/auth/authorize",
+      "_blank",
+      "width=1200,height=800",
+    );
+
+    expect(originalWindowOpen).toHaveBeenCalledWith(
+      "https://appleid.apple.com/auth/authorize",
+      "_blank",
+      "width=1200,height=800",
+    );
+    expect(window.location.href).toBe(
+      "https://appleid.apple.com/auth/authorize",
+    );
+    expect(result).toBe(window);
+  });
+
   it("navigates target blank auth links in-place when new-window is disabled", () => {
     const context = loadEventHelpers({ withTauri: true });
     context.window.pakeConfig = { new_window: false };
@@ -226,7 +505,7 @@ describe("event link guard", () => {
     expect(context.window.location.href).toBe("https://mycompany.okta.com/sso");
   });
 
-  it("navigates target blank internal links in-place when new-window is disabled", () => {
+  it("retargets internal target=_blank links to _self instead of forcing a reload", () => {
     const context = loadEventHelpers({ withTauri: true });
     context.window.pakeConfig = {
       new_window: false,
@@ -234,16 +513,34 @@ describe("event link guard", () => {
     };
     runDomReady(context);
 
-    const event = makeClickEvent(
-      makeAnchor("https://app.example.com/callback", "_blank"),
-    );
+    const anchor = makeAnchor("https://app.example.com/callback", "_blank");
+    const event = makeClickEvent(anchor);
+    getClickGuard(context)(event);
+
+    // The link must be neutralized so the native webview never opens a system
+    // browser window, but the page's own click handler (and a normal in-app
+    // navigation) should still run -- so we do NOT preventDefault / reload.
+    expect(anchor.target).toBe("_self");
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(event.stopImmediatePropagation).not.toHaveBeenCalled();
+    expect(context.window.location.href).toBe("https://example.com/app");
+  });
+
+  it("still opens external target=_blank links in the system browser", () => {
+    const context = loadEventHelpers({ withTauri: true });
+    context.window.pakeConfig = { new_window: false };
+    runDomReady(context);
+
+    const anchor = makeAnchor("https://other.example.org/page", "_blank");
+    const event = makeClickEvent(anchor);
     getClickGuard(context)(event);
 
     expect(event.preventDefault).toHaveBeenCalled();
     expect(event.stopImmediatePropagation).toHaveBeenCalled();
-    expect(context.window.location.href).toBe(
-      "https://app.example.com/callback",
-    );
+    expect(context.invokeCalls).toContainEqual([
+      "plugin:shell|open",
+      { path: "https://other.example.org/page" },
+    ]);
   });
 
   it("bridges Web Badging API calls to explicit badge commands", async () => {
@@ -280,5 +577,30 @@ describe("event link guard", () => {
       ],
       ["increment_dock_badge", undefined],
     ]);
+  });
+});
+
+describe("getFilenameFromUrl data URI extension", () => {
+  it("maps a structured image subtype to a real extension (svg+xml -> svg)", () => {
+    const context = loadEventHelpers();
+    const filename = context.getFilenameFromUrl(
+      "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=",
+    );
+    expect(filename).toMatch(/^image-.*\.svg$/);
+    expect(filename).not.toContain("+");
+  });
+
+  it("normalizes jpeg to jpg", () => {
+    const context = loadEventHelpers();
+    expect(context.getFilenameFromUrl("data:image/jpeg;base64,AAAA")).toMatch(
+      /^image-.*\.jpg$/,
+    );
+  });
+
+  it("does not fold the data payload into the extension when ';' is absent", () => {
+    const context = loadEventHelpers();
+    const filename = context.getFilenameFromUrl("data:image/png,rawdata");
+    expect(filename).toMatch(/^image-.*\.png$/);
+    expect(filename).not.toContain("data:image/");
   });
 });

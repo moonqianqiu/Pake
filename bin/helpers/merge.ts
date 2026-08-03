@@ -17,7 +17,8 @@ import {
   WindowConfig,
 } from '@/types';
 import { tauriConfigDirectory, npmDirectory } from '@/utils/dir';
-import { LINUX_TARGET_TYPES } from '@/utils/targets';
+import { PakeError } from '@/utils/error';
+import { LINUX_TARGET_TYPES, resolveLinuxBundleTargets } from '@/utils/targets';
 
 /**
  * Pure transform from CLI options to the window-config slice that gets
@@ -33,6 +34,8 @@ export function buildWindowConfigOverrides(
   const platformHideOnClose = options.hideOnClose ?? platform === 'darwin';
   const platformHideTitleBar =
     platform === 'darwin' ? options.hideTitleBar : false;
+  const platformHideWindowDecorations =
+    platform !== 'darwin' ? options.hideWindowDecorations : false;
   return {
     width: options.width,
     height: options.height,
@@ -40,6 +43,7 @@ export function buildWindowConfigOverrides(
     maximize: options.maximize,
     resizable: options.resizable ?? true,
     hide_title_bar: platformHideTitleBar,
+    hide_window_decorations: platformHideWindowDecorations,
     activation_shortcut: options.activationShortcut,
     always_on_top: options.alwaysOnTop,
     dark_mode: options.darkMode,
@@ -103,40 +107,155 @@ async function copyTemplateConfigs(): Promise<void> {
   );
 }
 
-async function handleLocalFile(
+// Replace the CLI's own dist/ with the user's static files while keeping the
+// build artifacts (cli.js) the packaged app does not need but the CLI does.
+// dist_bak always holds the ORIGINAL package dist: once it exists, later
+// stagings must not overwrite it with a previous user tree, or the original
+// files would be unrecoverable across repeated local builds.
+async function stageLocalTree(sourceDir: string): Promise<void> {
+  const distDir = path.join(npmDirectory, 'dist');
+  const distBakDir = path.join(npmDirectory, 'dist_bak');
+
+  // Resolve symlinked input up front: staging must produce a real copy, or
+  // the cli.js copy-back below would write through the link into the user's
+  // own directory.
+  const resolvedSource = await fsExtra.realpath(sourceDir);
+  const resolvedPackage = await fsExtra
+    .realpath(npmDirectory)
+    .catch(() => path.resolve(npmDirectory));
+  const packageDist = path.join(resolvedPackage, 'dist');
+  if (
+    resolvedSource === resolvedPackage ||
+    resolvedPackage.startsWith(resolvedSource + path.sep) ||
+    resolvedSource === packageDist ||
+    resolvedSource.startsWith(packageDist + path.sep)
+  ) {
+    throw new PakeError(
+      `Local input "${sourceDir}" contains the Pake CLI installation itself.`,
+      {
+        code: 'INVALID_INPUT',
+        hint: 'Point Pake at your built output directory, not at a directory containing pake-cli.',
+      },
+    );
+  }
+
+  try {
+    if (await fsExtra.pathExists(distBakDir)) {
+      fsExtra.removeSync(distDir);
+    } else {
+      fsExtra.moveSync(distDir, distBakDir);
+    }
+    fsExtra.copySync(resolvedSource, distDir, {
+      overwrite: true,
+      dereference: true,
+    });
+
+    const filesToCopyBack = ['cli.js'];
+    await Promise.all(
+      filesToCopyBack.map((file) =>
+        fsExtra.copy(path.join(distBakDir, file), path.join(distDir, file)),
+      ),
+    );
+  } catch (error) {
+    // Never leave the package without its own dist/: cli.js lives there and
+    // every later `pake` invocation would fail until a manual reinstall.
+    restoreLocalTree();
+    throw error;
+  }
+}
+
+// Put the package's original dist/ back once a local-input run is over (or
+// failed). Tauri bakes `frontendDist: ../dist` into every binary, so a stale
+// staged tree would leak this user's files into the next app built from the
+// same install. Safe to call on any run: a present dist_bak always holds the
+// original package dist, including one stranded by an older crashed run.
+export function restoreLocalTree(): void {
+  const distDir = path.join(npmDirectory, 'dist');
+  const distBakDir = path.join(npmDirectory, 'dist_bak');
+  if (!fsExtra.pathExistsSync(distBakDir)) {
+    return;
+  }
+  try {
+    fsExtra.removeSync(distDir);
+    fsExtra.moveSync(distBakDir, distDir);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    logger.warn(
+      `Failed to restore the CLI's original dist/ from dist_bak: ${detail}`,
+    );
+  }
+}
+
+// Exported for unit tests (web fallback and directory entry guard).
+export async function handleLocalFile(
   url: string,
   useLocalFile: boolean,
   tauriConf: PakeTauriConfig,
 ): Promise<void> {
   const pathExists = await fsExtra.pathExists(url);
-  if (pathExists) {
-    logger.warn('✼ Your input might be a local file.');
+  if (!pathExists) {
+    tauriConf.pake.windows[0].url_type = 'web';
+    return;
+  }
 
-    const fileName = path.basename(url);
-    const dirName = path.dirname(url);
-    const distDir = path.join(npmDirectory, 'dist');
-    const distBakDir = path.join(npmDirectory, 'dist_bak');
+  const stat = await fsExtra.stat(url);
 
-    if (!useLocalFile) {
-      const urlPath = path.join(distDir, fileName);
-      await fsExtra.copy(url, urlPath);
-    } else {
-      fsExtra.moveSync(distDir, distBakDir, { overwrite: true });
-      fsExtra.copySync(dirName, distDir, { overwrite: true });
-
-      const filesToCopyBack = ['cli.js'];
-      await Promise.all(
-        filesToCopyBack.map((file) =>
-          fsExtra.copy(path.join(distBakDir, file), path.join(distDir, file)),
-        ),
+  if (stat.isDirectory()) {
+    // A directory of static web assets (e.g. a generated dist/): the whole
+    // tree is packaged and the app entry is its root index.html.
+    const entryFile = 'index.html';
+    if (!(await fsExtra.pathExists(path.join(url, entryFile)))) {
+      throw new PakeError(
+        `Local directory "${url}" has no ${entryFile} at its root.`,
+        {
+          code: 'INVALID_INPUT',
+          hint: 'Point Pake at the built output directory that contains index.html.',
+        },
       );
     }
-
-    tauriConf.pake.windows[0].url = fileName;
+    logger.info(`✺ Packaging local directory: ${url}`);
+    await stageLocalTree(url);
+    tauriConf.pake.windows[0].url = entryFile;
     tauriConf.pake.windows[0].url_type = 'local';
-  } else {
-    tauriConf.pake.windows[0].url_type = 'web';
+    return;
   }
+
+  logger.info(`✺ Packaging local file: ${url}`);
+
+  const fileName = path.basename(url);
+  const distDir = path.join(npmDirectory, 'dist');
+
+  if (!useLocalFile) {
+    const urlPath = path.join(distDir, fileName);
+    await fsExtra.copy(url, urlPath);
+  } else {
+    await stageLocalTree(path.dirname(url));
+  }
+
+  tauriConf.pake.windows[0].url = fileName;
+  tauriConf.pake.windows[0].url_type = 'local';
+}
+
+export function buildLinuxDesktopContent(
+  name: string,
+  title: string | undefined,
+  linuxBinaryName: string,
+): string {
+  const chineseName = title && /[\u4e00-\u9fa5]/.test(title) ? title : null;
+
+  return `[Desktop Entry]
+Version=1.0
+Type=Application
+Name=${name}
+${chineseName ? `Name[zh_CN]=${chineseName}` : ''}
+Comment=${name}
+Exec=${linuxBinaryName}
+Icon=${linuxBinaryName}
+Categories=Network;WebBrowser;Utility;
+MimeType=text/html;text/xml;application/xhtml_xml;
+StartupNotify=true
+Terminal=false
+`;
 }
 
 async function mergeLinuxConfig(
@@ -155,23 +274,11 @@ async function mergeLinuxConfig(
 
   const linuxName = generateLinuxPackageName(name);
   const desktopFileName = `com.pake.${linuxName}.desktop`;
-  const iconName = `${linuxName}_512`;
-  const { title } = options;
-
-  const chineseName = title && /[\u4e00-\u9fa5]/.test(title) ? title : null;
-  const desktopContent = `[Desktop Entry]
-Version=1.0
-Type=Application
-Name=${name}
-${chineseName ? `Name[zh_CN]=${chineseName}` : ''}
-Comment=${name}
-Exec=${linuxBinaryName}
-Icon=${iconName}
-Categories=Network;WebBrowser;Utility;
-MimeType=text/html;text/xml;application/xhtml_xml;
-StartupNotify=true
-Terminal=false
-`;
+  const desktopContent = buildLinuxDesktopContent(
+    name,
+    options.title,
+    linuxBinaryName,
+  );
 
   const srcAssetsDir = path.join(npmDirectory, 'src-tauri/assets');
   const srcDesktopFilePath = path.join(srcAssetsDir, desktopFileName);
@@ -190,21 +297,60 @@ Terminal=false
     [desktopInstallPath]: `assets/${desktopFileName}`,
   };
 
-  const validTargets = [
-    ...LINUX_TARGET_TYPES,
-    ...LINUX_TARGET_TYPES.map((target) => `${target}-arm64`),
-  ];
-  const baseTarget = options.targets.includes('-arm64')
-    ? options.targets.replace('-arm64', '')
-    : options.targets;
+  // options.targets reaches here already stripped of any -arm64 suffix by the
+  // LinuxBuilder constructor, and may carry several comma-separated formats
+  // (e.g. the distro-aware default "deb,appimage"). Validate the parsed list
+  // rather than string-matching the whole value, so a valid multi-target
+  // default no longer trips the "must be one of ..." warning on every build.
+  const { bundleTargets, hasValidTarget } = resolveLinuxBundleTargets(
+    options.targets,
+  );
 
-  if (validTargets.includes(options.targets)) {
-    // zst is repacked from the deb payload, so Tauri itself bundles a deb.
-    tauriConf.bundle.targets = [baseTarget === 'zst' ? 'deb' : baseTarget];
+  if (hasValidTarget) {
+    tauriConf.bundle.targets = bundleTargets;
   } else {
     logger.warn(
-      `✼ The target must be one of ${validTargets.join(', ')}, the default 'deb' will be used.`,
+      `✼ The target must be one of ${LINUX_TARGET_TYPES.join(', ')}, the default 'deb' will be used.`,
     );
+  }
+}
+
+export async function resolveSystemTrayIconPath(
+  systemTrayIcon: string,
+  defaultTrayIconPath: string,
+  safeAppName: string,
+  iconOutputDir = path.join(npmDirectory, 'src-tauri/png'),
+): Promise<string> {
+  if (systemTrayIcon.length === 0) {
+    return defaultTrayIconPath;
+  }
+
+  try {
+    const iconExt = path.extname(systemTrayIcon).toLowerCase();
+    if (iconExt !== '.png' && iconExt !== '.ico') {
+      logger.warn(
+        `✼ System tray icon must be .ico or .png, but you provided ${iconExt}.`,
+      );
+      logger.warn(`✼ Default system tray icon will be used.`);
+      return defaultTrayIconPath;
+    }
+
+    if (!(await fsExtra.pathExists(systemTrayIcon))) {
+      logger.warn(`✼ System tray icon "${systemTrayIcon}" was not found.`);
+      logger.warn(`✼ Default system tray icon will be used.`);
+      return defaultTrayIconPath;
+    }
+
+    const trayIconPath = `png/${safeAppName}${iconExt}`;
+    const trayIcoPath = path.join(iconOutputDir, `${safeAppName}${iconExt}`);
+    await fsExtra.copy(systemTrayIcon, trayIcoPath);
+    return trayIconPath;
+  } catch (err) {
+    logger.warn(
+      `✼ Failed to apply system tray icon "${systemTrayIcon}": ${err instanceof Error ? err.message : String(err)}`,
+    );
+    logger.warn(`✼ Default system tray icon will remain unchanged.`);
+    return defaultTrayIconPath;
   }
 }
 
@@ -285,32 +431,13 @@ async function mergeIcons(
   }
 
   // Set tray icon path.
-  let trayIconPath =
+  const defaultTrayIconPath =
     platform === 'darwin' ? 'png/icon_512.png' : tauriConf.bundle.icon![0];
-  if (options.systemTrayIcon.length > 0) {
-    try {
-      await fsExtra.pathExists(options.systemTrayIcon);
-      const iconExt = path.extname(options.systemTrayIcon).toLowerCase();
-      if (iconExt === '.png' || iconExt === '.ico') {
-        const trayIcoPath = path.join(
-          npmDirectory,
-          `src-tauri/png/${safeAppName}${iconExt}`,
-        );
-        trayIconPath = `png/${safeAppName}${iconExt}`;
-        await fsExtra.copy(options.systemTrayIcon, trayIcoPath);
-      } else {
-        logger.warn(
-          `✼ System tray icon must be .ico or .png, but you provided ${iconExt}.`,
-        );
-        logger.warn(`✼ Default system tray icon will be used.`);
-      }
-    } catch (err) {
-      logger.warn(
-        `✼ Failed to apply system tray icon "${options.systemTrayIcon}": ${err instanceof Error ? err.message : String(err)}`,
-      );
-      logger.warn(`✼ Default system tray icon will remain unchanged.`);
-    }
-  }
+  const trayIconPath = await resolveSystemTrayIconPath(
+    options.systemTrayIcon,
+    defaultTrayIconPath,
+    safeAppName,
+  );
 
   tauriConf.pake.system_tray_path = trayIconPath;
   delete tauriConf.app.trayIcon;
@@ -444,6 +571,11 @@ export async function mergeConfig(
   if (options.hideTitleBar && platform !== 'darwin') {
     logger.warn(
       '✼ --hide-title-bar is only supported on macOS and will be ignored on this platform.',
+    );
+  }
+  if (options.hideWindowDecorations && platform === 'darwin') {
+    logger.warn(
+      '✼ --hide-window-decorations is only supported on Windows and Linux and will be ignored on this platform.',
     );
   }
   const tauriConfWindowOptions = buildWindowConfigOverrides(options, platform);

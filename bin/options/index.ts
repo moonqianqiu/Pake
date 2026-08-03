@@ -11,6 +11,7 @@ import {
 } from '@/utils/info';
 import { generateLinuxPackageName } from '@/utils/name';
 import { PakeError } from '@/utils/error';
+import { isInteractive } from '@/utils/output';
 import { PakeAppOptions, PakeCliOptions } from '@/types';
 
 function resolveAppName(name: string, platform: NodeJS.Platform): string {
@@ -55,9 +56,13 @@ export default async function handleOptions(
     const defaultName = pathExists
       ? resolveLocalAppName(url, platform)
       : resolveAppName(url, platform);
-    const promptMessage = 'Enter your application name';
-    const namePrompt = await promptText(promptMessage, defaultName);
-    name = namePrompt?.trim() || defaultName;
+    if (isInteractive()) {
+      const promptMessage = 'Enter your application name';
+      const namePrompt = await promptText(promptMessage, defaultName);
+      name = namePrompt?.trim() || defaultName;
+    } else {
+      name = defaultName;
+    }
   }
 
   if (name && platform === 'linux') {
@@ -89,6 +94,12 @@ export default async function handleOptions(
   // --safe-domain is sugar over --internal-url-regex; an explicit regex wins.
   if (!options.internalUrlRegex && options.safeDomain) {
     appOptions.internalUrlRegex = safeDomainsToRegex(options.safeDomain);
+  }
+
+  // --no-bundle is Linux-only; keep normal packaging on other platforms.
+  if (appOptions.bundle === false && platform !== 'linux') {
+    logger.warn('✼ --no-bundle is only supported on Linux; ignoring it.');
+    appOptions.bundle = true;
   }
 
   const iconPath = await handleIcon(appOptions, url);

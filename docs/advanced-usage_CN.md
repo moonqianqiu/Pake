@@ -83,7 +83,7 @@ if (window.Notification && Notification.permission === "default") {
 **网页端（JavaScript）：**
 
 ```javascript
-window.__TAURI__.invoke("handle_scroll", {
+window.__TAURI__.core.invoke("handle_scroll", {
   scrollY: window.scrollY,
   scrollX: window.scrollX,
 });
@@ -104,27 +104,34 @@ fn handle_scroll(scroll_y: f64, scroll_x: f64) {
 
 ```json
 {
-  "windows": {
-    "width": 1200,
-    "height": 780,
-    "fullscreen": false,
-    "resizable": true
-  },
-  "hideTitleBar": true
+  "windows": [
+    {
+      "width": 1200,
+      "height": 780,
+      "fullscreen": false,
+      "resizable": true,
+      "hide_title_bar": true
+    }
+  ]
 }
 ```
 
-`hideTitleBar` 仅支持 macOS，在 Windows 和 Linux 上会被忽略。
+`hide_title_bar` 是 `pake.json` 中的字段名（CLI 对应参数为 `--hide-title-bar`）。仅支持 macOS，在 Windows 和 Linux 上会被忽略。Windows 和 Linux 请使用 `hide_window_decorations`（`--hide-window-decorations`）。
 
 ## 静态文件打包
 
 打包本地 HTML/CSS/JS 文件：
 
 ```bash
+# 打包整个静态文件目录（根目录必须有 index.html），
+# 例如前端构建产物 dist/，整个目录树都会被打进应用
+pake ./dist --name my-tool
+
+# 打包单个 HTML 文件；加 --use-local-file 可同时拷贝同级文件
 pake ./my-app/index.html --name my-static-app --use-local-file
 ```
 
-要求：Pake CLI >= 3.0.0
+本地打包开箱支持 hash 路由，history 模式的 SPA 路由暂不支持。单文件打包要求 Pake CLI >= 3.0.0，目录打包要求 >= 3.15.0。
 
 ## macOS 摄像头与麦克风权限
 
@@ -135,8 +142,8 @@ pake https://chatgpt.com --name ChatGPT --microphone
 pake https://meet.google.com --name GoogleMeet --camera --microphone
 ```
 
-- `--microphone` — 申请麦克风权限（`com.apple.security.device.audio-input`）
-- `--camera` — 申请摄像头权限（`com.apple.security.device.camera`）
+- `--microphone`: 申请麦克风权限（`com.apple.security.device.audio-input`）
+- `--camera`: 申请摄像头权限（`com.apple.security.device.camera`）
 
 macOS 会在首次使用时向用户弹出权限确认对话框。请仅在确实需要的站点上添加这些标志。
 

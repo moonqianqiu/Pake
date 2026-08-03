@@ -46,6 +46,11 @@ ${green('|_|   \\__,_|_|\\_\\___|  can turn any webpage into a desktop app with 
     )
     .option('--fullscreen', 'Start in full screen', DEFAULT.fullscreen)
     .option('--hide-title-bar', 'For Mac, hide title bar', DEFAULT.hideTitleBar)
+    .option(
+      '--hide-window-decorations',
+      'Hide native window decorations on Windows and Linux',
+      DEFAULT.hideWindowDecorations,
+    )
     .option('--multi-arch', 'For Mac, both Intel and M1', DEFAULT.multiArch)
     .option(
       '--inject <files>',
@@ -65,6 +70,15 @@ ${green('|_|   \\__,_|_|\\_\\___|  can turn any webpage into a desktop app with 
       DEFAULT.inject,
     )
     .option('--debug', 'Debug build and more output', DEFAULT.debug)
+    .option(
+      '--json',
+      'Machine-readable output: logs to stderr, one JSON result on stdout',
+      DEFAULT.json,
+    )
+    .option(
+      '--config <path>',
+      'Load options from a JSON config file (fields mirror CLI options, see schema/pake.schema.json)',
+    )
     .addOption(
       new Option(
         '--proxy-url <url>',
@@ -166,6 +180,14 @@ ${green('|_|   \\__,_|_|\\_\\___|  can turn any webpage into a desktop app with 
         .hideHelp(),
     )
     .addOption(
+      new Option(
+        '--no-bundle',
+        'Skip packaging, output only the raw executable (Linux; for RPM distros where the bundler aborts)',
+      )
+        .default(DEFAULT.bundle)
+        .hideHelp(),
+    )
+    .addOption(
       new Option('--multi-instance', 'Allow multiple app instances')
         .default(DEFAULT.multiInstance)
         .hideHelp(),
@@ -219,8 +241,8 @@ ${green('|_|   \\__,_|_|\\_\\___|  can turn any webpage into a desktop app with 
         .default(DEFAULT.zoom)
         .argParser((value) => {
           const zoom = Number(value);
-          if (!Number.isFinite(zoom) || zoom < 50 || zoom > 200) {
-            throw new Error('--zoom must be a number between 50 and 200');
+          if (!Number.isInteger(zoom) || zoom < 50 || zoom > 200) {
+            throw new Error('--zoom must be an integer between 50 and 200');
           }
           return zoom;
         })

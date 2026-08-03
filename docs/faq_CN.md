@@ -9,8 +9,10 @@
 - [构建问题](#构建问题)
   - [Rust 版本错误:"feature 'edition2024' is required"](#rust-版本错误feature-edition2024-is-required)
   - [Linux：Ubuntu 24.04 构建报错 "Can't detect any appindicator library"](#linuxubuntu-2404-构建报错-cant-detect-any-appindicator-library)
+  - [Linux：在 Fedora / RHEL / Oracle Linux 等 RPM 系发行版上安装](#linux在-fedora--rhel--oracle-linux-等-rpm-系发行版上安装)
   - [Linux：AppImage 构建失败，提示 "failed to run linuxdeploy"](#linuxappimage-构建失败提示-failed-to-run-linuxdeploy)
   - [Linux：AppImage 启动即崩溃，提示找不到 WebKitNetworkProcess](#linuxappimage-启动即崩溃提示找不到-webkitnetworkprocess)
+  - [Linux：AppImage 打开后按钮或键盘在 Wayland 下不可用](#linuxappimage-打开后按钮或键盘在-wayland-下不可用)
   - [Linux:"cargo: command not found" 即使已安装 Rust](#linuxcargo-command-not-found-即使已安装-rust)
   - [Windows：首次构建时安装超时](#windows首次构建时安装超时)
   - [Windows：缺少 Visual Studio 构建工具](#windows缺少-visual-studio-构建工具)
@@ -19,6 +21,7 @@
   - [应用窗口太小/太大](#应用窗口太小太大)
   - [应用图标显示不正确](#应用图标显示不正确)
   - [网站功能不工作（登录、上传等）](#网站功能不工作登录上传等)
+  - [应用占用内存比预期高](#应用占用内存比预期高)
 - [安装问题](#安装问题)
   - [全局安装时权限被拒绝](#全局安装时权限被拒绝)
 - [获取帮助](#获取帮助)
@@ -98,6 +101,43 @@ Can't detect any appindicator library
 sudo apt-get update
 sudo apt-get install -y libayatana-appindicator3-dev
 ```
+
+---
+
+### Linux：在 Fedora / RHEL / Oracle Linux 等 RPM 系发行版上安装
+
+**问题：**
+在 RPM 系发行版（Fedora、RHEL、Oracle Linux、Rocky、AlmaLinux、openSUSE）上，
+`.deb` 包无法被系统包管理器安装，而旧版本 Pake 总是先构建 `.deb`。
+
+**解决方法：**
+
+Pake 现在会读取 `/etc/os-release` 来决定默认打包目标：RPM 系发行版默认使用
+`rpm, appimage`，Debian/Ubuntu 仍然是 `deb, appimage`。所以基础命令就能直接产出
+可安装的包：
+
+```bash
+pake https://github.com --name GitHub
+sudo dnf install ./GitHub.rpm   # 或：sudo rpm -i ./GitHub.rpm
+```
+
+你也可以随时显式指定格式：
+
+```bash
+pake https://github.com --name GitHub --targets rpm        # RPM 包
+pake https://github.com --name GitHub --targets appimage   # 便携 AppImage
+```
+
+默认会构建多个目标，此时单个格式失败不再中断其余格式：如果 `.rpm`/`.deb` 打包失败，
+仍会产出 AppImage 作为便携回退方案。AppImage 无需安装即可运行：
+
+```bash
+chmod +x ./GitHub.AppImage
+./GitHub.AppImage
+```
+
+> 构建 `.rpm` 需要 `rpm-build`（`sudo dnf install rpm-build`）。如果你只想要一个可运行
+> 的程序而不需要打包，可加上 `--keep-binary`，它会把原始可执行文件复制到安装包旁边。
 
 ---
 
@@ -397,7 +437,7 @@ EOF
 pake https://example.com --width 1200 --height 800
 ```
 
-查看 [CLI 使用指南](cli-usage_CN.md#窗口选项) 了解所有窗口选项。
+查看 [CLI 使用指南](cli-usage_CN.md#width) 了解所有窗口选项。
 
 ---
 
@@ -483,6 +523,8 @@ Pake 可以自动转换图标，但提供正确的格式更可靠。
 
    某些认证提供方，尤其是 Google，可能会阻止在嵌入式 WebView 中完成登录。由于 Pake 是把网站包装进桌面 WebView，Google 自家站点或依赖 Google OAuth 的网站，即使启用了 `--new-window` 或 `--multi-window`，也仍然可能无法在应用内完成登录。这属于提供方策略限制，不是打包逻辑错误。遇到这种情况时，建议改用普通浏览器、浏览器安装版站点应用，或官方原生桌面客户端。
 
+   在 macOS 上，Pake 会让 **Sign in with Apple**（弹窗模式，例如 Yelp、Upwork）继续走原生弹窗路径，确保 Apple 的回调可以返回原页面。其他认证弹窗仍可能在当前窗口内跳转，以规避 WebKit 崩溃。如果提供方拦截嵌入式 WebView，或登录仍然失败，建议改用普通浏览器、浏览器安装版站点应用，或官方原生桌面客户端。
+
 5. **微信 Web 版登录环境异常**
 
    微信检测到 WebView 后会写入标记 Cookie，导致后续持续被拦截。打包时加 `--incognito` 可解决，代价是每次启动都需要重新扫码登录：
@@ -490,6 +532,21 @@ Pake 可以自动转换图标，但提供正确的格式更可靠。
    ```bash
    pake https://wx.qq.com --name WeChat --incognito
    ```
+
+6. **Cloudflare 或人机验证一直循环**
+
+   某些站点（例如 ChatGPT）会在页面前加一层 Cloudflare 验证。系统 WebView，尤其是 Linux 上的 WebKitGTK，经常被这类验证判定为非标准浏览器而一直循环、无法通过，即使加了自定义 `--user-agent` 也无效。这是验证服务在识别浏览器引擎，不是 Pake 的 bug，Pake 侧没有可靠的绕过手段。遇到强制此类验证的站点，建议改用普通浏览器或官方原生客户端。
+
+---
+
+### 应用占用内存比预期高
+
+**问题：**
+应用会启动一个 WebKitWebProcess（Linux）或 WebContent 进程（macOS），占用几百 MB 内存，看起来和"约 5MB"的说法矛盾。
+
+**说明：**
+
+"约 5MB"指的是安装包/应用在磁盘上的体积，不是运行时内存。运行时 Pake 通过系统 WebView 渲染（Linux 上是 WebKitWebProcess，macOS 上是 WKWebView），这个进程的内存由引擎和你加载的页面决定，不由 Pake 控制。像 Gemini、Slack、ChatGPT 这类重型 SPA，用 GNOME Web 等任意 WebKitGTK 浏览器打开也会占用差不多的内存。Pake 在 WebView 之上几乎不增加额外开销，所以没有能显著降低它的 Pake 侧设置。这是使用系统 WebView 的固有代价，也是换取极小安装体积的取舍。
 
 ---
 
