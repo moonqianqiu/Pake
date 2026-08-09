@@ -69,7 +69,7 @@ Keep shared project facts in this file so Codex, Claude Code, and other agents u
 Goals and project facts only; trust the agent to find its own path.
 
 - Deliver the smallest correct diff and prove it with the narrowest real verification; expand only when evidence demands it. If key context is missing, make one reasonable assumption and proceed.
-- Generated areas (`dist/`, `node_modules/`, `src-tauri/target/`, `.app/`, `src-tauri/icons/`, `src-tauri/png/`) are not source. Exception: `dist/cli.js` is the shipped CLI build artifact (see `package.json` `files`); any change under `bin/` rebuilds it via `pnpm run cli:build` and commits the regenerated file alongside the source change.
+- Generated areas (`dist/`, `node_modules/`, `src-tauri/target/`, `.app/`, `src-tauri/icons/`, `src-tauri/png/`) are not source. Exception: `dist/cli.js` is the shipped CLI build artifact (see `package.json` `files`); rebuild it via `pnpm run cli:build` and commit the regenerated file alongside the source change. Two things trigger a rebuild, not one: any change under `bin/`, and **any** change to `package.json`. Rollup inlines the whole manifest, so a dependency bump, a `pnpm.overrides` edit, an `engines` change, or a reworded `description` all leave `dist/cli.js` stale with no `bin/` diff to hint at it. Dependency-only PRs are the usual place this is missed.
 - Release status, issue closeout, npm delivery, and GitHub assets are separate truth surfaces. Verify each one live (source commit/tag, workflow run, npm registry, GitHub Release/assets, issue state); never let one passing surface imply another.
 
 ## Hotspot Map (for `/bugs`)
@@ -106,10 +106,11 @@ Proactive latent-bug sweeps use `.agents/skills/bugs/SKILL.md`. Pick one row and
 - Local app builds and test runs mutate tracked files as build state: `src-tauri/pake.json`, `src-tauri/tauri.conf.json`, `src-tauri/tauri.macos.conf.json`, and regenerated icons under `src-tauri/png/` and `src-tauri/icons/`. Before committing, `git restore` whatever you did not intentionally change; never let a feature or release commit absorb this churn.
 - Per-app optional fields in `default_app_list.json` currently take their defaults in Actions expressions in `release.yml` (`matrix.config.x || false` and the numeric ones), which works because every field so far is default-false or numeric. The first default-true field cannot use that path and must move its default into the jq read step: GitHub expressions cast both `null` and `false` to `0`, so `matrix.config.x != false` cannot express "default true" and would silently flip every app missing the field.
 - Windows taskbar icons can register blank when an autostarted app launches before Explorer's icon cache is ready (#1323). Every hidden-to-visible `window.show()` path (main or secondary: tray show/click, activation shortcut, single-instance activation, startup/page-load reveal, multi-window Cmd+N reveal) must call `reapply_window_icon` from `src-tauri/src/app/window.rs` (or go through `reveal_built_window` / `reveal_startup_window`, which already do). The helper reasserts both the small window icon and the large taskbar icon; a new show path without it regresses the bug.
-- Multi-window home clones (`open_additional_window_safe`, labels `pake-N`) are built hidden and revealed via `reveal_built_window` on the first real page load (or a 3s fallback), matching the main-window blank-shell guard. OAuth/pop-up windows from `--new-window` stay immediately visible by design. Tray Hide/Show, tray left-click, and the activation shortcut must act on **every** webview via `hide_all_app_windows` / `show_all_app_windows` / `toggle_all_app_windows` (not only label `"pake"`).
+- Multi-window home clones (`open_additional_window_safe`, labels `pake-N`) are built hidden and revealed via `reveal_built_window` on the first real page load (or a 3s fallback), matching the main-window blank-shell guard. OAuth/pop-up windows from `--new-window` stay immediately visible by design. Tray Hide/Show, tray left-click, and the activation shortcut must act on **every** webview via `hide_all_app_windows` / `show_all_app_windows` / `toggle_all_app_windows` (not only label `"pake"`). Two Windows-specific constraints hold that toggle together (#1343): the tray click handler must match `button_state == MouseButtonState::Up`, because Windows emits `TrayIconEvent::Click` twice per physical click and reacting to both runs the toggle twice; and `any_app_window_visible` must exclude minimized windows, because `hide_on_close` minimizes before hiding and Windows keeps `IsWindowVisible` true while a window is iconic. Locked by `tests/unit/tray-toggle-visibility.test.ts`.
 - Injected Linux/Windows shortcuts (Ctrl+R / [ / ]) call the `webview_navigate` IPC so reload and history use the platform webview API on blank error pages; do not route those shortcuts only through page `history` / `location`.
 - Download and toast paths must not hardcode `get_webview_window("pake")` when the action originates from a secondary window: IPC commands take the calling `WebviewWindow`, and `on_download` resolves toast by the event webview's label. Authenticated downloads should attach webview session cookies when available. Link-download heuristics prefer real file extensions, the `download` attribute, and `?download` / `?attachment` query hints; Cmd/Ctrl+click is navigation, not "save as"; do not re-add broad SPA roots such as `/assets/`, `/dist/`, `/files/`, or `/releases/` (see #1337, #1339).
 - macOS menu navigation must keep working on blank error pages: Reload uses native `WebviewWindow::reload`, Go Home uses `navigate` + `resolve_home_url`, Back/Forward use the platform WKWebView history API rather than page `eval`. Copy URL reads `window.url()` so it does not depend on a live JS document.
+- Not every green CI step is evidence. `Test CLI Integration (smoke)` in `quality-and-test.yml` ends its command with `|| true`, so it reports success no matter how the CLI behaves; it is a log-producer, not a gate. The steps that actually fail on regressions are `Run Fast Test Suite` (all three platforms) and `Full Tauri Build` (real `pnpm test` with a build, push and dispatch only). Cite those when claiming a change is verified, and check for `|| true` and `continue-on-error` before treating any other step as proof.
 - `.github/workflows/pake-cli.yaml` and `single-app.yaml` are public build surfaces that external users trigger from their own forks (see `docs/github-actions-usage*.md`). Changes there ship to outside users on push to `main`, independent of `V*` releases; treat them like public API, not internal CI.
 
 ## Platform-Specific Development
@@ -154,6 +155,8 @@ Tag format: `V<major.minor.patch>` with uppercase `V` (e.g. `V3.13.1`). Current 
 
 Find the previous release tag with `git tag --list 'V*' --sort=-version:refname | head -1`. A bare `git tag --sort` is polluted by stray non-version tags (`list`, `continuous`, `0.1.0`) and silently picks the wrong log range.
 
+Filter those tags out; do not delete them without checking each one first. `continuous` is not junk: it carries a real 2023 prerelease ("Continuous build") with 40 assets and roughly 700 downloads, so removing the tag breaks every historical download link. `list` and `0.1.0` point at old commits with no release attached. Any tag deletion here is a public, irreversible action and needs maintainer authorization in the current turn.
+
 ## Release Workflow (CI)
 
 Pushing a `V*` tag triggers `.github/workflows/release.yml`:
@@ -177,7 +180,7 @@ For release follow-through, keep these boundaries explicit:
 - `workflow_dispatch` runs on a branch. Bind npm-only publishing to the exact `main` commit with `expected_sha` and a successful Quality run for that same SHA; do not infer a release tag or source commit from the branch name, run title, or compare UI.
 - For CLI/npm issue closeout, the npm registry is the decisive public surface. GitHub app release assets and quality workflows should still be reported, but they are separate surfaces.
 - For app-release claims, inspect the GitHub Release directly with `gh release view <tag> --json assets` and check asset count/state instead of trusting source state or workflow names alone.
-- The contributors bot can push `chore: update contributors [skip ci]` at any moment, including between local commits and the bump push. On a rejected push, `git pull --rebase` onto it and push again before tagging. After release, fast-forward local `main`; do not move an already pushed release tag to include it.
+- The contributors bot can push `chore: update contributors [skip ci]` at any moment, including between local commits and the bump push. On a rejected push, `git pull --rebase` onto it and push again before tagging. After release, fast-forward local `main`; do not move an already pushed release tag to include it. Never tag that bot commit itself: GitHub evaluates `[skip ci]` against the head commit for tag pushes too, so a `V*` tag landing on it silently produces no workflow run, no release, and no assets, with no error anywhere. Before pushing a release tag, confirm the target commit's subject has no `[skip ci]` and that the commit has its own green Quality run; point the tag at the last real commit when the bot is on top.
 
 `.github/workflows/quality-and-test.yml` runs auto-format on push, Rust quality checks, and CLI/build validation across Linux, Windows, and macOS.
 
@@ -195,6 +198,8 @@ Pake uses official npm and Rust sources by default. CN mirrors are explicit opt-
 ## Issue Closeout After a Fix
 
 Default loop for a fixed user-reported CLI bug: ship the fix as an npm patch release first, then reply to the reporter with the concrete upgrade command (`npm install -g pake-cli@latest`, or `pake-cli@X.Y.Z` when `latest` may point elsewhere), then close the issue noting it can be reopened if the problem persists. Do not reply "fixed" pointing at an unreleased commit; the npm registry must return the fix version first. The publish itself follows the authorization rule in Release Workflow above.
+
+Keep `closes #N` / `fixes #N` out of commit messages for user-reported bugs. GitHub closes the issue the moment the commit reaches `main`, which is before npm has the fix, so the reporter sees a silent closure while still unable to get it. Reference the issue as a bare `#N` and close it by hand after the registry returns the fix version.
 
 ## Community PR Triage
 
@@ -220,9 +225,9 @@ SDKROOT = "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/
 
 This file is already in `.gitignore`.
 
-### `dist/cli.js` out of sync with `bin/`
+### `dist/cli.js` out of sync with its sources
 
-Symptom: tests or release builds use stale CLI behavior after a `bin/` edit. Fix with `pnpm run cli:build` and commit the regenerated `dist/cli.js`. Note `dist/` is gitignored while `dist/cli.js` is tracked, so stage it with `git add -f dist/cli.js`. The file embeds the package version, so version bumps must also rebuild and commit it.
+Symptom: tests or release builds use stale CLI behavior after a `bin/` or `package.json` edit. Fix with `pnpm run cli:build` and commit the regenerated `dist/cli.js`. Note `dist/` is gitignored while `dist/cli.js` is tracked, so stage it with `git add -f dist/cli.js`. `quality-and-test.yml` catches this on Linux by failing when `git diff -- dist/` is non-empty after a rebuild, so an unrebuilt artifact fails CI rather than shipping quietly.
 
 ### First Tauri build is slow
 

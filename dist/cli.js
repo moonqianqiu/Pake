@@ -20,10 +20,10 @@ import * as psl from 'psl';
 import { InvalidArgumentError, program as program$1, Option } from 'commander';
 
 var name = "pake-cli";
-var version = "3.15.5";
+var version = "3.15.6";
 var description = "🤱🏻 Turn any webpage into a desktop app with one command. 🤱🏻 一键打包网页生成轻量桌面应用。";
 var engines = {
-	node: ">=18.0.0"
+	node: ">=20.0.0"
 };
 var packageManager = "pnpm@10.26.2";
 var bin = {
@@ -78,14 +78,14 @@ var dependencies = {
 	chalk: "^5.6.2",
 	commander: "^14.0.3",
 	execa: "^9.6.1",
-	"file-type": "^21.3.0",
+	"file-type": "^21.3.4",
 	"fs-extra": "^11.3.3",
 	"icon-gen": "^5.0.0",
 	loglevel: "^1.9.2",
 	ora: "^9.3.0",
 	prompts: "^2.4.2",
 	psl: "^1.15.0",
-	sharp: "^0.34.5",
+	sharp: "^0.35.0",
 	"tmp-promise": "^3.0.3",
 	"update-notifier": "^7.3.1"
 };
@@ -111,8 +111,9 @@ var devDependencies = {
 };
 var pnpm = {
 	overrides: {
-		sharp: "^0.34.5",
-		"@img/sharp-libvips-darwin-arm64": "1.2.4"
+		sharp: "^0.35.0",
+		"@img/sharp-libvips-darwin-arm64": "1.3.0",
+		tmp: "0.2.7"
 	},
 	onlyBuiltDependencies: [
 		"esbuild",
