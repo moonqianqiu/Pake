@@ -362,6 +362,11 @@ fn build_window(
         visible,
         new_window_features,
     } = opts;
+    #[cfg(target_os = "macos")]
+    let use_native_window_tabbing = config.multi_window && new_window_features.is_none();
+    #[cfg(target_os = "macos")]
+    let prefer_native_window_tabbing = use_native_window_tabbing && label != "pake";
+
     let package_name = tauri_config
         .product_name
         .clone()
@@ -375,10 +380,13 @@ fn build_window(
         ))
     })?;
 
+    // On macOS both HTTP Basic auth and certificate bypass use the same
+    // navigation-delegate proxy. Start on a neutral page so the proxy is in
+    // place before the target can issue its first authentication challenge.
     #[cfg(target_os = "macos")]
-    let cert_bypass_target = if label == "pake"
-        && window_config.ignore_certificate_errors
+    let auth_target = if label == "pake"
         && window_config.url_type == "web"
+        && (config.basic_auth || window_config.ignore_certificate_errors)
     {
         Url::parse(&window_config.url).ok()
     } else {
@@ -388,7 +396,7 @@ fn build_window(
     // The delegate must be installed before the first TLS challenge. Start on
     // a neutral page, then navigate from the with_webview callback below.
     #[cfg(target_os = "macos")]
-    let url = if cert_bypass_target.is_some() {
+    let url = if auth_target.is_some() {
         WebviewUrl::CustomProtocol(
             Url::parse("about:blank").expect("about:blank must be a valid URL"),
         )
@@ -567,6 +575,22 @@ fn build_window(
         };
         window_builder = window_builder.title_bar_style(title_bar_style);
         window_builder = window_builder.theme(theme);
+
+        // Tauri disables automatic tabbing unless an identifier is provided.
+        // Existing multi-window apps already have a stable bundle identifier,
+        // so use it without exposing another CLI/config option. Web-created
+        // popups keep their own native window.
+        if use_native_window_tabbing {
+            window_builder = window_builder
+                .tabbing_identifier(&tauri_config.identifier)
+                .on_document_title_changed(|window, title| {
+                    if !title.trim().is_empty() {
+                        if let Err(error) = window.set_title(&title) {
+                            eprintln!("[Pake] Failed to update the macOS tab title: {error}");
+                        }
+                    }
+                });
+        }
     }
 
     // Windows and Linux: set data_directory before proxy_url
@@ -686,25 +710,51 @@ fn build_window(
 
     let window = window_builder.build()?;
 
-    // macOS WKWebView ignores the Chromium --ignore-certificate-errors flag, so
-    // install a host-scoped delegate on the process-lifetime main window only.
-    // Queue setup after construction so wry cannot replace the proxy while it
-    // finishes initializing its own navigation delegate.
+    // A shared identifier alone leaves each NSWindow in automatic mode.
+    // Prefer tabs only for Cmd+N clones so they join the main window's tab
+    // group. The main window stays bar-less until another tab exists, while
+    // web-auth and window.open popups remain separate native windows.
     #[cfg(target_os = "macos")]
-    if let Some(target_url) = cert_bypass_target {
+    if prefer_native_window_tabbing {
+        let tabbing_window = window.clone();
+        Queue::main().exec_async(move || match tabbing_window.ns_window() {
+            Ok(ns_window_ptr) => unsafe {
+                let Some(ns_window) =
+                    objc2::rc::Retained::retain(ns_window_ptr as *mut objc2_app_kit::NSWindow)
+                else {
+                    eprintln!("[Pake] Failed to retain the macOS window for tabbing.");
+                    return;
+                };
+                ns_window.setTabbingMode(objc2_app_kit::NSWindowTabbingMode::Preferred);
+            },
+            Err(error) => {
+                eprintln!("[Pake] Failed to access the macOS window for tabbing: {error}");
+            }
+        });
+    }
+
+    // WKWebView does not show an HTTP Basic login dialog and ignores Chromium's
+    // certificate-error flag. Install one host-scoped delegate for both flows
+    // on the process-lifetime main window, then navigate to the real target.
+    #[cfg(target_os = "macos")]
+    if let Some(target_url) = auth_target {
         let allowed_host = target_url
             .host_str()
             .expect("web URLs must have a host")
             .to_owned();
-        let cert_window = window.clone();
+        let prompt_for_basic_auth = config.basic_auth;
+        let allow_invalid_certificates = window_config.ignore_certificate_errors;
+        let auth_window = window.clone();
         Queue::main().exec_async(move || {
-            if let Err(error) = cert_window.with_webview(move |webview| {
-                if !crate::app::cert::install_cert_bypass_and_navigate(
+            if let Err(error) = auth_window.with_webview(move |webview| {
+                if !crate::app::auth::install_auth_delegate_and_navigate(
                     webview.inner(),
                     allowed_host,
                     target_url.to_string(),
+                    prompt_for_basic_auth,
+                    allow_invalid_certificates,
                 ) {
-                    eprintln!("[Pake] Failed to configure macOS certificate bypass.");
+                    eprintln!("[Pake] Failed to configure macOS authentication handling.");
                 }
             }) {
                 eprintln!("[Pake] Failed to access the macOS webview: {error}");

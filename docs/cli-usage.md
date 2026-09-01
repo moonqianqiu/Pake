@@ -539,6 +539,8 @@ This is different from `--multi-instance`:
 
 When enabled, relaunching an already running app opens a new window instead of only focusing the existing one.
 
+On macOS, additional windows opened with Cmd+N join the app's native tab group. Web-auth and `window.open` popups remain separate.
+
 This can improve popup-based authentication flows, but it cannot bypass provider policy. Some providers, especially Google, may still reject sign-in inside embedded webviews.
 
 ```shell
@@ -593,6 +595,14 @@ Set proxy server for all network requests. Supports HTTP, HTTPS, and SOCKS5. Ava
 ```shell
 --proxy-url http://127.0.0.1:7890
 --proxy-url socks5://127.0.0.1:7891
+```
+
+#### [basic-auth]
+
+Prompt for HTTP Basic credentials when the target site requests them. This is only needed on macOS, where WKWebView does not provide its own 401 login dialog. Credentials are entered in the packaged app at runtime and are kept only for the current session.
+
+```shell
+--basic-auth
 ```
 
 #### [debug]
