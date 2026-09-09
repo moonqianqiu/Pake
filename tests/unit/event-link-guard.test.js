@@ -8,10 +8,14 @@ function loadEventHelpers({
   userAgent = "Mozilla/5.0",
   initialZoom = null,
 } = {}) {
-  const source = fs.readFileSync(
-    path.join(process.cwd(), "src-tauri/src/inject/event.js"),
-    "utf-8",
-  );
+  const source = ["link_policy.js", "event.js"]
+    .map((file) =>
+      fs.readFileSync(
+        path.join(process.cwd(), "src-tauri/src/inject", file),
+        "utf-8",
+      ),
+    )
+    .join("\n");
 
   const invokeCalls = [];
   const invoke = (command, payload) => {
@@ -66,6 +70,7 @@ function loadEventHelpers({
       language: "en-US",
     },
     window: {
+      frames: [],
       history: {
         back: () => {},
         forward: () => {},
@@ -146,6 +151,124 @@ function makeClickEvent(anchor) {
 }
 
 describe("event link guard", () => {
+  it.each([
+    ["internal", "https://example.com/forced", {}],
+    ["auth", "https://accounts.google.com/o/oauth2/auth", {}],
+    [
+      "forced internal",
+      "https://outside.example/forced",
+      { force_internal_navigation: true },
+    ],
+    [
+      "regex internal",
+      "https://outside.example/forced",
+      { internal_url_regex: "outside\\.example" },
+    ],
+  ])(
+    "rejects forged %s frame messages without navigating or opening windows",
+    (_kind, url, config) => {
+      const context = loadEventHelpers({
+        withTauri: true,
+        userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_5)",
+      });
+      context.window.pakeConfig = config;
+      context.window.isAuthLink = context.window.isAuthPopup = (value) =>
+        value.includes("accounts.google.com");
+      const nativeOpen = vi.fn(() => ({}));
+      context.window.open = nativeOpen;
+      runDomReady(context);
+      const frame = { frames: [] };
+      context.window.frames.push(frame);
+      context.eventListeners.message[0].handler({
+        source: frame,
+        data: { type: "pake:frame-external-link", url },
+      });
+      expect(context.window.location.href).toBe("https://example.com/app");
+      expect(nativeOpen).not.toHaveBeenCalled();
+      expect(
+        context.invokeCalls.filter(
+          ([command]) => command === "plugin:shell|open",
+        ),
+      ).toEqual([]);
+    },
+  );
+
+  it("routes early frame messages once after readiness and rechecks live sources", () => {
+    const context = loadEventHelpers({ withTauri: true });
+    const live = { frames: [] };
+    const removed = { frames: [] };
+    context.window.frames.push(live, removed);
+    const listener = context.eventListeners.message?.[0]?.handler;
+    expect(listener).toBeTypeOf("function");
+    for (const [source, suffix] of [
+      [live, "first"],
+      [live, "second"],
+      [removed, "removed"],
+    ]) {
+      listener({
+        source,
+        data: {
+          type: "pake:frame-external-link",
+          url: `https://outside.example/${suffix}`,
+        },
+      });
+    }
+    expect(context.invokeCalls).toEqual([]);
+    context.window.frames.pop();
+    runDomReady(context);
+    expect(
+      context.invokeCalls.filter(
+        ([command]) => command === "plugin:shell|open",
+      ),
+    ).toEqual([
+      ["plugin:shell|open", { path: "https://outside.example/first" }],
+      ["plugin:shell|open", { path: "https://outside.example/second" }],
+    ]);
+    expect(context.eventListeners.DOMContentLoaded).toHaveLength(1);
+  });
+
+  it("discards a departing document's queued frame messages", () => {
+    const context = loadEventHelpers({ withTauri: true });
+    const frame = { frames: [] };
+    context.window.frames.push(frame);
+    const listener = context.eventListeners.message?.[0]?.handler;
+    expect(listener).toBeTypeOf("function");
+    listener({
+      source: frame,
+      data: {
+        type: "pake:frame-external-link",
+        url: "https://outside.example/old",
+      },
+    });
+    context.eventListeners.pagehide[0].handler();
+    runDomReady(context);
+    expect(
+      context.invokeCalls.filter(
+        ([command]) => command === "plugin:shell|open",
+      ),
+    ).toEqual([]);
+  });
+
+  it("routes only descendant-frame messages with supported URL protocols", () => {
+    const context = loadEventHelpers({ withTauri: true });
+    runDomReady(context);
+    const frame = { frames: [] };
+    context.window.frames.push(frame);
+    const listener = context.eventListeners.message[0].handler;
+    const send = (source, url) =>
+      listener({ source, data: { type: "pake:frame-external-link", url } });
+    send(frame, "https://outside.example/article");
+    expect(context.invokeCalls).toContainEqual([
+      "plugin:shell|open",
+      { path: "https://outside.example/article" },
+    ]);
+    const count = context.invokeCalls.length;
+    send({ frames: [] }, "https://outside.example/unrelated");
+    send(frame, "file:///tmp/example");
+    send(frame, "javascript:alert(1)");
+    send(null, "https://outside.example/opaque");
+    expect(context.invokeCalls).toHaveLength(count);
+  });
   it("falls back from malformed saved zoom values", () => {
     const context = loadEventHelpers({
       withTauri: true,

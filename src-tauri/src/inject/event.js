@@ -529,52 +529,6 @@ function isDownloadableFile(url) {
   }
 }
 
-// Public suffixes where the registrable domain needs more than two labels.
-// Not exhaustive; covers common packaging targets that last-two-label
-// matching would collapse incorrectly (e.g. amazon.co.uk vs evil.co.uk,
-// or every *.github.io site into one "domain").
-const MULTI_PART_PUBLIC_SUFFIXES = [
-  "co.uk",
-  "org.uk",
-  "ac.uk",
-  "gov.uk",
-  "com.au",
-  "net.au",
-  "org.au",
-  "co.jp",
-  "ne.jp",
-  "or.jp",
-  "co.kr",
-  "co.in",
-  "com.br",
-  "com.cn",
-  "com.tw",
-  "com.hk",
-  "com.sg",
-  "github.io",
-  "gitlab.io",
-  "pages.dev",
-];
-
-function getRootDomain(hostname) {
-  const normalized = String(hostname || "").toLowerCase();
-  if (!normalized) {
-    return "";
-  }
-
-  const parts = normalized.split(".").filter(Boolean);
-  if (parts.length <= 1) {
-    return normalized;
-  }
-
-  const lastTwo = parts.slice(-2).join(".");
-  if (MULTI_PART_PUBLIC_SUFFIXES.includes(lastTwo) && parts.length >= 3) {
-    return parts.slice(-3).join(".");
-  }
-
-  return lastTwo;
-}
-
 function normalizeAnchorHref(rawHref) {
   return typeof rawHref === "string" ? rawHref.trim() : "";
 }
@@ -642,21 +596,55 @@ function openAuthNavigation(originalWindowOpen, url, name, specs) {
   return authWindow;
 }
 
+// Install the receiver at document start: a subframe can open a link before
+// the main page's DOMContentLoaded routing setup has run.
+let openFrameLink = null;
+const pendingFrameLinks = [];
+function isDescendantFrame(source, parent = window) {
+  for (let index = 0; index < parent.frames.length; index++) {
+    const frame = parent.frames[index];
+    if (frame === source || isDescendantFrame(source, frame)) return true;
+  }
+  return false;
+}
+function routeFrameLink(source, href) {
+  try {
+    // Recheck on delivery because the frame may have been removed meanwhile.
+    if (!isDescendantFrame(source)) return;
+    const url = new URL(href);
+    if (!["http:", "https:", "mailto:", "tel:"].includes(url.protocol)) return;
+    if (openFrameLink) {
+      openFrameLink.call(window, url.href, "_blank");
+    } else {
+      pendingFrameLinks.push({ source, href: url.href });
+    }
+  } catch (error) {
+    console.error("[Pake] Failed to route frame link:", error);
+  }
+}
+window.addEventListener("message", (event) => {
+  if (
+    event.data?.type !== "pake:frame-external-link" ||
+    typeof event.data.url !== "string" ||
+    !event.source ||
+    event.source === window
+  )
+    return;
+  routeFrameLink(event.source, event.data.url);
+});
+window.addEventListener("pagehide", () => {
+  pendingFrameLinks.length = 0;
+});
+
 document.addEventListener("DOMContentLoaded", () => {
   const tauri = window.__TAURI__;
   const appWindow = tauri.window.getCurrentWindow();
   const invoke = tauri.core.invoke;
   const pakeConfig = window["pakeConfig"] || {};
   const forceInternalNavigation = pakeConfig.force_internal_navigation === true;
-  const internalUrlRegex = pakeConfig.internal_url_regex || "";
-  let internalUrlPattern = null;
-  if (internalUrlRegex) {
-    try {
-      internalUrlPattern = new RegExp(internalUrlRegex);
-    } catch (e) {
-      console.error("[Pake] Invalid internal_url_regex pattern:", e);
-    }
-  }
+  const matchesInternalUrl = createInternalUrlMatcher(
+    pakeConfig.internal_url_regex,
+  );
 
   if (!document.getElementById("pake-top-dom") && hasImmersiveHeader()) {
     const topDom = document.createElement("div");
@@ -731,39 +719,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   };
 
-  // Check if URL belongs to the same domain (including subdomains)
-  const isSameDomain = (url) => {
-    try {
-      const linkUrl = new URL(url);
-      const currentUrl = new URL(window.location.href);
-
-      if (linkUrl.hostname === currentUrl.hostname) return true;
-
-      // e.g. www.bilibili.com and m.bilibili.com share bilibili.com;
-      // amazon.co.uk must not share a root with evil.co.uk.
-      return (
-        getRootDomain(currentUrl.hostname) === getRootDomain(linkUrl.hostname)
-      );
-    } catch (e) {
-      return false;
-    }
-  };
-
-  // Check if URL should be treated as internal based on regex pattern or domain
-  const isInternalUrl = (url) => {
-    // If regex pattern is configured, use it as the primary check
-    if (internalUrlPattern) {
-      try {
-        return internalUrlPattern.test(url);
-      } catch (e) {
-        console.error("[Pake] Error testing internal_url_regex:", e);
-        // Fall back to domain check on error
-        return isSameDomain(url);
-      }
-    }
-    // Default to domain-based check
-    return isSameDomain(url);
-  };
+  const isInternalUrl = (url) => matchesInternalUrl(url, window.location.href);
 
   const detectAnchorElementClick = (e) => {
     // Safety check: ensure e.target exists and is an Element with closest method
@@ -780,6 +736,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const target = anchorElement.target;
       const hrefUrl = new URL(anchorElement.href);
+      if (["mailto:", "tel:"].includes(hrefUrl.protocol)) return;
       const absoluteUrl = hrefUrl.href;
       let filename = anchorElement.download || getFilenameFromUrl(absoluteUrl);
 
@@ -892,7 +849,11 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   };
 
-  // Prevent some special websites from executing in advance, before the click event is triggered.
+  window.addEventListener("click", (event) =>
+    handleProtocolLinkClick(event, handleExternalLink),
+  );
+
+  // Capture web links before site popup handlers route them into the app.
   document.addEventListener("click", detectAnchorElementClick, true);
 
   // Rewrite the window.open function.
@@ -946,6 +907,23 @@ document.addEventListener("DOMContentLoaded", () => {
       return originalWindowOpen.call(window, url, name, specs);
     }
   };
+
+  // The sender is untrusted even when it belongs to this webview. This bridge
+  // may only open external links, never navigate the top page or create auth
+  // windows on a sandboxed frame's behalf.
+  openFrameLink = (url) => {
+    if (
+      forceInternalNavigation ||
+      isInternalUrl(url) ||
+      window.isAuthLink(url)
+    ) {
+      return;
+    }
+    handleExternalLink(url);
+  };
+  for (const { source, href } of pendingFrameLinks.splice(0)) {
+    routeFrameLink(source, href);
+  }
 
   // Set the default zoom, There are problems with Loop without using try-catch.
   try {

@@ -33,10 +33,14 @@ function loadEventHelpers({
   clipboardReadRejects = false,
   userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
 } = {}) {
-  const source = fs.readFileSync(
-    path.join(process.cwd(), "src-tauri/src/inject/event.js"),
-    "utf-8",
-  );
+  const source = ["link_policy.js", "event.js"]
+    .map((file) =>
+      fs.readFileSync(
+        path.join(process.cwd(), "src-tauri/src/inject", file),
+        "utf-8",
+      ),
+    )
+    .join("\n");
 
   const eventListeners = {};
   const elementsById = new Map();

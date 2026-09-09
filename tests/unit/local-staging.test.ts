@@ -15,6 +15,7 @@ vi.mock('@/utils/dir', async () => {
   const base = nodePath.join(nodeOs.tmpdir(), `pake-staging-${process.pid}`);
   return {
     npmDirectory: nodePath.join(base, 'pkg'),
+    packageDirectory: nodePath.join(base, 'pkg'),
     tauriConfigDirectory: nodePath.join(base, 'pkg', 'src-tauri', '.pake'),
   };
 });

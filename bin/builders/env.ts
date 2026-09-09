@@ -3,8 +3,8 @@ import fsExtra from 'fs-extra';
 
 import { CN_MIRROR_ENV } from '@/utils/mirror';
 import { IS_MAC } from '@/utils/platform';
-import { npmDirectory } from '@/utils/dir';
 import logger from '@/options/logger';
+import type { ShellCommand } from '@/utils/shell';
 import packageJson from '../../package.json';
 
 /**
@@ -130,12 +130,11 @@ export async function detectPackageManager(): Promise<'pnpm' | 'npm'> {
 export function getInstallCommand(
   packageManager: string,
   useCnMirror: boolean,
-): string {
-  const registryOption = useCnMirror
-    ? ' --registry=https://registry.npmmirror.com'
-    : '';
-  const peerDepsOption = packageManager === 'npm' ? ' --legacy-peer-deps' : '';
-  return `cd "${npmDirectory}" && ${packageManager} install${registryOption}${peerDepsOption}`;
+): ShellCommand {
+  const args = ['install'];
+  if (useCnMirror) args.push('--registry=https://registry.npmmirror.com');
+  if (packageManager === 'npm') args.push('--legacy-peer-deps');
+  return { executable: packageManager, args };
 }
 
 async function copyFileWithSamePathGuard(

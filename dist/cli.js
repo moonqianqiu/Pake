@@ -4,13 +4,14 @@ import chalk from 'chalk';
 import updateNotifier from 'update-notifier';
 import path from 'path';
 import fsExtra from 'fs-extra';
-import { fileURLToPath } from 'url';
 import prompts from 'prompts';
 import os from 'os';
 import { execa, execaSync } from 'execa';
 import crypto from 'crypto';
 import ora from 'ora';
 import fs from 'fs';
+import { fileURLToPath } from 'url';
+import { setTimeout as setTimeout$1 } from 'timers/promises';
 import fs$1 from 'fs/promises';
 import { dir } from 'tmp-promise';
 import { fileTypeFromBuffer } from 'file-type';
@@ -18,9 +19,8 @@ import * as psl from 'psl';
 import { InvalidArgumentError, program as program$1, Option } from 'commander';
 
 var name = "pake-cli";
-var version = "3.15.7";
+var version = "3.16.1";
 var description = "🤱🏻 Turn any webpage into a desktop app with one command. 🤱🏻 一键打包网页生成轻量桌面应用。";
-var homepage = "https://faberon.io/projects/pake";
 var engines = {
 	node: ">=20.9.0"
 };
@@ -98,7 +98,6 @@ var devDependencies = {
 	"@types/prompts": "^2.4.9",
 	"@types/tmp": "^0.2.6",
 	"@types/update-notifier": "^6.0.8",
-	"app-root-path": "^3.1.0",
 	"cross-env": "^10.1.0",
 	prettier: "^3.8.1",
 	rollup: "^4.59.0",
@@ -122,7 +121,6 @@ var packageJson = {
 	name: name,
 	version: version,
 	description: description,
-	homepage: homepage,
 	engines: engines,
 	packageManager: packageManager,
 	bin: bin,
@@ -137,40 +135,6 @@ var packageJson = {
 	dependencies: dependencies,
 	devDependencies: devDependencies,
 	pnpm: pnpm
-};
-
-// Convert the current module URL to a file path
-const currentModulePath = fileURLToPath(import.meta.url);
-// Resolve the parent directory of the current module
-const npmDirectory = path.join(path.dirname(currentModulePath), '..');
-const tauriConfigDirectory = path.join(npmDirectory, 'src-tauri', '.pake');
-
-// Load configs from npm package directory, not from project source
-const tauriSrcDir = path.join(npmDirectory, 'src-tauri');
-const pakeConf = fsExtra.readJSONSync(path.join(tauriSrcDir, 'pake.json'));
-const CommonConf = fsExtra.readJSONSync(path.join(tauriSrcDir, 'tauri.conf.json'));
-const WinConf = fsExtra.readJSONSync(path.join(tauriSrcDir, 'tauri.windows.conf.json'));
-const MacConf = fsExtra.readJSONSync(path.join(tauriSrcDir, 'tauri.macos.conf.json'));
-const LinuxConf = fsExtra.readJSONSync(path.join(tauriSrcDir, 'tauri.linux.conf.json'));
-const platformConfigs = {
-    win32: WinConf,
-    darwin: MacConf,
-    linux: LinuxConf,
-};
-const { platform: platform$2 } = process;
-// @ts-ignore
-const platformConfig = platformConfigs[platform$2];
-let tauriConfig = {
-    ...CommonConf,
-    bundle: platformConfig.bundle,
-    app: {
-        ...CommonConf.app,
-        trayIcon: {
-            ...(platformConfig?.app?.trayIcon ?? {}),
-        },
-    },
-    build: CommonConf.build,
-    pake: pakeConf,
 };
 
 // Stable exit-code contract: 0 success, 2 invalid input, 3 build/network
@@ -281,10 +245,10 @@ function isCnMirrorEnabled(value = process.env[CN_MIRROR_ENV]) {
     return TRUE_VALUES.has((value ?? '').trim().toLowerCase());
 }
 
-const { platform: platform$1 } = process;
-const IS_MAC = platform$1 === 'darwin';
-const IS_WIN = platform$1 === 'win32';
-const IS_LINUX = platform$1 === 'linux';
+const { platform: platform$2 } = process;
+const IS_MAC = platform$2 === 'darwin';
+const IS_WIN = platform$2 === 'win32';
+const IS_LINUX = platform$2 === 'linux';
 // Distro IDs / ID_LIKE families that ship an RPM-based package manager.
 const RPM_FAMILY_IDS = new Set([
     'rhel',
@@ -373,10 +337,295 @@ function getDefaultLinuxTargets() {
     return detectLinuxPackageFamily() === 'rpm' ? 'rpm,appimage' : 'deb,appimage';
 }
 
-async function shellExec(command, timeout = 300000, env) {
+// Convert the current module URL to a file path
+const currentModulePath = fileURLToPath(import.meta.url);
+// Resolve the parent directory of the current module
+const packageDirectory = path.join(path.dirname(currentModulePath), '..');
+let npmDirectory = packageDirectory;
+let tauriConfigDirectory = path.join(npmDirectory, 'src-tauri', '.pake');
+// A CLI invocation owns one build workspace. Keep template resolution separate
+// from generated paths so packaging never rewrites the installed package.
+function setBuildDirectory(directory) {
+    npmDirectory = directory;
+    tauriConfigDirectory = path.join(directory, 'src-tauri', '.pake');
+}
+
+const logger = {
+    info(...msg) {
+        log.info(...msg.map((m) => chalk.white(m)));
+    },
+    debug(...msg) {
+        log.debug(...msg);
+    },
+    error(...msg) {
+        log.error(...msg.map((m) => chalk.red(m)));
+    },
+    warn(...msg) {
+        log.warn(...msg.map((m) => chalk.yellow(m)));
+    },
+    success(...msg) {
+        log.info(...msg.map((m) => chalk.green(m)));
+    },
+};
+
+/**
+ * Error class used for user-facing CLI errors.
+ *
+ * The top-level catch in `bin/cli.ts` prints `message` directly without a
+ * stack trace and exits with the code mapped from `code` (see
+ * ERROR_EXIT_CODES in utils/output.ts). Use this for predictable failures
+ * (invalid names, missing files, etc.) so users see a clean message instead
+ * of a Node.js stack dump. `code` and `hint` also feed the `--json` result.
+ */
+class PakeError extends Error {
+    constructor(message, options) {
+        super(message);
+        this.isUserError = true;
+        this.name = 'PakeError';
+        this.code = options?.code;
+        this.hint = options?.hint;
+    }
+}
+function isPakeError(error) {
+    return (error instanceof PakeError ||
+        (typeof error === 'object' &&
+            error !== null &&
+            error.isUserError === true));
+}
+
+/** Check the local launcher and native binding, not just an installed manifest. */
+async function hasReadyTauriCli(directory) {
+    const modules = path.join(directory, 'node_modules');
+    const launcher = path.join(modules, '.bin', process.platform === 'win32' ? 'tauri.cmd' : 'tauri');
+    const entry = path.join(modules, '@tauri-apps', 'cli', 'tauri.js');
     try {
-        const { exitCode } = await execa(command, {
-            cwd: npmDirectory,
+        await fsExtra.access(launcher, process.platform === 'win32' ? fsExtra.constants.F_OK : fsExtra.constants.X_OK);
+        await execa(process.execPath, [entry, '--version'], {
+            cwd: directory,
+            stdio: 'ignore',
+            timeout: 10000,
+        });
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
+
+let cancellation;
+function beginBuildCancellation() {
+    const scope = { controller: new AbortController() };
+    cancellation = scope;
+    const cancel = (signal) => scope.controller.abort(new PakeError(`Build cancelled (${signal}).`, { code: 'BUILD_FAILED' }));
+    const interrupt = () => cancel('SIGINT');
+    const terminate = () => cancel('SIGTERM');
+    process.on('SIGINT', interrupt);
+    process.on('SIGTERM', terminate);
+    return () => {
+        process.off('SIGINT', interrupt);
+        process.off('SIGTERM', terminate);
+        if (cancellation === scope)
+            cancellation = undefined;
+    };
+}
+function getBuildCancellationSignal() {
+    return cancellation?.controller.signal;
+}
+function preventBuildWorkspaceCleanup(reason) {
+    if (cancellation)
+        cancellation.unsafeCleanup = reason;
+}
+function throwIfBuildCancelled() {
+    getBuildCancellationSignal()?.throwIfAborted();
+}
+/** Copy only build inputs; cached or previously generated user content is not a template. */
+async function createBuildWorkspace(sourceDirectory) {
+    const directory = await fsExtra.mkdtemp(path.join(os.tmpdir(), 'pake-build-'));
+    try {
+        for (const file of [
+            'package.json',
+            'pnpm-lock.yaml',
+            'package-lock.json',
+            'rust-toolchain.toml',
+            'rust-toolchain',
+        ]) {
+            const source = path.join(sourceDirectory, file);
+            if (await fsExtra.pathExists(source))
+                await fsExtra.copy(source, path.join(directory, file));
+        }
+        const sourceTauri = path.join(sourceDirectory, 'src-tauri');
+        await fsExtra.copy(sourceTauri, path.join(directory, 'src-tauri'), {
+            filter: (source) => !['target', '.pake', 'gen'].includes(path.relative(sourceTauri, source).split(path.sep)[0]),
+        });
+        await fsExtra.ensureDir(path.join(directory, 'dist'));
+        // Keep the CLI runnable while local input staging replaces this workspace's dist.
+        await fsExtra.copy(path.join(sourceDirectory, 'dist', 'cli.js'), path.join(directory, 'dist', 'cli.js'));
+        const modules = path.join(sourceDirectory, 'node_modules');
+        if (await hasReadyTauriCli(sourceDirectory)) {
+            await fsExtra.symlink(modules, path.join(directory, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
+        }
+        return directory;
+    }
+    catch (error) {
+        await fsExtra.remove(directory);
+        throw error;
+    }
+}
+/** Hold the cache through artifact copying, beyond Cargo's own compile lock. */
+async function acquireBuildCache(targetDirectory) {
+    await fsExtra.ensureDir(targetDirectory);
+    const lock = path.join(targetDirectory, '.pake-build.lock');
+    const started = Date.now();
+    let announced = false;
+    for (;;) {
+        throwIfBuildCancelled();
+        try {
+            const handle = await fsExtra.open(lock, 'wx');
+            try {
+                fsExtra.writeFileSync(handle, String(process.pid));
+            }
+            finally {
+                fsExtra.closeSync(handle);
+            }
+            let released = false;
+            return async () => {
+                if (!released) {
+                    await fsExtra.remove(lock);
+                    released = true;
+                }
+            };
+        }
+        catch (error) {
+            if (error.code !== 'EEXIST')
+                throw error;
+        }
+        try {
+            const owner = Number(await fsExtra.readFile(lock, 'utf8'));
+            if (Number.isInteger(owner) && owner > 0) {
+                try {
+                    process.kill(owner, 0);
+                }
+                catch (error) {
+                    if (error.code === 'ESRCH') {
+                        // Read-then-unlink cannot atomically reclaim a dead owner's lock:
+                        // another waiter may already have acquired a new one at this path.
+                        throw new PakeError('A previous Pake process left a compilation cache lock.', {
+                            code: 'BUILD_FAILED',
+                            hint: `After stopping other Pake builds, remove ${lock} and retry.`,
+                        });
+                    }
+                }
+            }
+        }
+        catch (error) {
+            if (error.code === 'ENOENT')
+                continue;
+            throw error;
+        }
+        if (Date.now() - started > 900000) {
+            throw new PakeError('Another Pake build is still using the compilation cache.', {
+                code: 'BUILD_FAILED',
+                hint: 'Wait for that build to finish, then retry.',
+            });
+        }
+        if (!announced) {
+            logger.info('Waiting for another Pake build to finish using the compilation cache...');
+            announced = true;
+        }
+        await setTimeout$1(200);
+    }
+}
+async function enterBuildWorkspace() {
+    const previousTarget = process.env.CARGO_TARGET_DIR;
+    const targetDirectory = path.resolve(packageDirectory, previousTarget || 'src-tauri/target');
+    const release = await acquireBuildCache(targetDirectory);
+    let directory;
+    try {
+        directory = await createBuildWorkspace(packageDirectory);
+    }
+    catch (error) {
+        await release();
+        throw error;
+    }
+    setBuildDirectory(directory);
+    process.env.CARGO_TARGET_DIR = targetDirectory;
+    const leave = async () => {
+        setBuildDirectory(packageDirectory);
+        if (previousTarget === undefined)
+            delete process.env.CARGO_TARGET_DIR;
+        else
+            process.env.CARGO_TARGET_DIR = previousTarget;
+        if (cancellation?.unsafeCleanup) {
+            logger.warn(`Build processes could not be confirmed stopped; keeping workspace ${directory} and its cache lock: ${cancellation.unsafeCleanup}`);
+            return;
+        }
+        try {
+            await fsExtra.remove(directory);
+        }
+        catch (error) {
+            logger.warn(`Could not remove the temporary build workspace ${directory}: ${String(error)}`);
+        }
+        finally {
+            try {
+                await release();
+            }
+            catch (error) {
+                logger.warn(`Could not release the compilation cache lock: ${String(error)}`);
+            }
+        }
+    };
+    if (getBuildCancellationSignal()?.aborted) {
+        await leave();
+        throwIfBuildCancelled();
+    }
+    return leave;
+}
+
+async function terminateBuildTree(pid) {
+    if (process.platform === 'win32') {
+        await execa('taskkill', ['/pid', String(pid), '/T', '/F'], {
+            timeout: 5000,
+            windowsHide: true,
+        });
+        return;
+    }
+    const killGroup = (signal) => {
+        try {
+            process.kill(-pid, signal);
+        }
+        catch (error) {
+            if (error.code !== 'ESRCH')
+                throw error;
+        }
+    };
+    killGroup('SIGTERM');
+    const started = Date.now();
+    for (;;) {
+        // The package manager can exit before its compiler descendants. Only
+        // release the cache once no live member of their process group remains.
+        // Zombies have already exited and cannot write artifacts.
+        const { stdout } = await execa('ps', ['-axo', 'pgid=,stat='], {
+            timeout: 1000,
+        });
+        const alive = stdout.split('\n').some((line) => {
+            const [group, state] = line.trim().split(/\s+/);
+            return Number(group) === pid && state && !state.startsWith('Z');
+        });
+        if (!alive)
+            return;
+        if (Date.now() - started > 5000)
+            throw new Error('Build process group did not stop.');
+        if (Date.now() - started >= 250)
+            killGroup('SIGKILL');
+        await setTimeout$1(25);
+    }
+}
+async function shellExec(command, timeout = 300000, env) {
+    const signal = getBuildCancellationSignal();
+    signal?.throwIfAborted();
+    try {
+        const subprocess = execa(command.executable, command.args, {
+            cwd: command.cwd ?? npmDirectory,
             // Use 'inherit' to show all output directly to user in real-time.
             // This ensures linuxdeploy and other tool outputs are visible during builds.
             // In machine mode (--json) stdout is reserved for the final JSON result,
@@ -384,22 +633,53 @@ async function shellExec(command, timeout = 300000, env) {
             stdin: 'inherit',
             stdout: isMachineMode() ? process.stderr : 'inherit',
             stderr: 'inherit',
-            shell: true,
+            shell: false,
+            detached: Boolean(signal) && process.platform !== 'win32',
             timeout,
             env: env ? { ...process.env, ...env } : process.env,
         });
-        return exitCode;
+        let termination;
+        const cancel = () => {
+            if (termination || subprocess.pid === undefined)
+                return;
+            termination = terminateBuildTree(subprocess.pid).catch((error) => {
+                preventBuildWorkspaceCleanup(String(error));
+                subprocess.kill('SIGKILL');
+            });
+        };
+        signal?.addEventListener('abort', cancel, { once: true });
+        if (signal?.aborted)
+            cancel();
+        try {
+            const { exitCode } = await subprocess;
+            return exitCode;
+        }
+        catch (error) {
+            // A timed-out or failed package manager can leave compiler descendants.
+            // Use the same tree barrier before the caller releases its cache lock.
+            if (signal)
+                cancel();
+            throw error;
+        }
+        finally {
+            signal?.removeEventListener('abort', cancel);
+            await termination;
+            signal?.throwIfAborted();
+        }
     }
     catch (error) {
+        if (signal?.aborted)
+            throw signal.reason;
+        const description = JSON.stringify([command.executable, ...command.args]);
         const exitCode = error.exitCode ?? 'unknown';
         const errorMessage = error.message || 'Unknown error occurred';
         if (error.timedOut) {
-            throw new Error(`Command timed out after ${timeout}ms: "${command}". Try increasing timeout or check network connectivity.`);
+            throw new Error(`Command timed out after ${timeout}ms: ${description}. Try increasing timeout or check network connectivity.`);
         }
         // AppImage/linuxdeploy guidance is added by the caller (BaseBuilder), which
         // knows the build target. We only have the command line here (the tool's
         // diagnostics stream to the terminal via stdio:inherit, not into the error).
-        throw new Error(`Error occurred while executing command "${command}". Exit code: ${exitCode}. Details: ${errorMessage}`);
+        throw new Error(`Error occurred while executing command ${description}. Exit code: ${exitCode}. Details: ${errorMessage}`);
     }
 }
 
@@ -450,25 +730,54 @@ function ensureRustEnv() {
     ensureCargoBinOnPath();
 }
 async function installRust() {
-    const rustInstallScriptForUnix = isCnMirrorEnabled()
-        ? 'export RUSTUP_DIST_SERVER="https://rsproxy.cn" && export RUSTUP_UPDATE_ROOT="https://rsproxy.cn/rustup" && curl --proto "=https" --tlsv1.2 -sSf https://rsproxy.cn/rustup-init.sh | sh'
-        : "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y";
-    const rustInstallScriptForWindows = 'winget install --id Rustlang.Rustup';
     const spinner = getSpinner('Downloading Rust...');
     try {
-        await shellExec(IS_WIN ? rustInstallScriptForWindows : rustInstallScriptForUnix, 300000, undefined);
+        if (IS_WIN) {
+            await shellExec({
+                executable: 'winget',
+                args: ['install', '--id', 'Rustlang.Rustup'],
+            });
+        }
+        else {
+            const useCnMirror = isCnMirrorEnabled();
+            const tempDir = await fsExtra.mkdtemp(path.join(os.tmpdir(), 'pake-rustup-'));
+            try {
+                const scriptPath = path.join(tempDir, 'rustup-init.sh');
+                await shellExec({
+                    executable: 'curl',
+                    args: [
+                        '--proto',
+                        '=https',
+                        '--tlsv1.2',
+                        '-sSf',
+                        '-o',
+                        scriptPath,
+                        useCnMirror
+                            ? 'https://rsproxy.cn/rustup-init.sh'
+                            : 'https://sh.rustup.rs',
+                    ],
+                });
+                await shellExec({
+                    executable: 'sh',
+                    args: useCnMirror ? [scriptPath] : [scriptPath, '-y'],
+                }, 300000, useCnMirror
+                    ? {
+                        RUSTUP_DIST_SERVER: 'https://rsproxy.cn',
+                        RUSTUP_UPDATE_ROOT: 'https://rsproxy.cn/rustup',
+                    }
+                    : undefined);
+            }
+            finally {
+                await fsExtra.remove(tempDir);
+            }
+        }
         spinner.succeed(chalk.green('✔ Rust installed successfully!'));
         ensureRustEnv();
     }
     catch (error) {
         spinner.fail(chalk.red('✕ Rust installation failed!'));
-        if (error instanceof Error) {
-            console.error(error.message);
-        }
-        else {
-            console.error(error);
-        }
-        process.exit(1);
+        // The CLI owns error reporting and workspace/cache cleanup.
+        throw error;
     }
 }
 function checkRustInstalled() {
@@ -488,9 +797,13 @@ async function combineFiles(files, output) {
             const fileContent = await fs$1.readFile(file, 'utf-8');
             return `window.addEventListener('DOMContentLoaded', (_event) => {
         const css = ${JSON.stringify(fileContent)};
-        const style = document.createElement('style');
-        style.textContent = css;
-        document.head.appendChild(style);
+        if (typeof window.__PAKE_INJECT_STYLE__ === 'function') {
+          window.__PAKE_INJECT_STYLE__(css);
+        } else {
+          const style = document.createElement('style');
+          style.textContent = css;
+          document.head.appendChild(style);
+        }
       });`;
         }
         const fileContent = await fs$1.readFile(file);
@@ -505,24 +818,6 @@ async function combineFiles(files, output) {
     await fs$1.writeFile(output, contents.join('\n'));
     return files;
 }
-
-const logger = {
-    info(...msg) {
-        log.info(...msg.map((m) => chalk.white(m)));
-    },
-    debug(...msg) {
-        log.debug(...msg);
-    },
-    error(...msg) {
-        log.error(...msg.map((m) => chalk.red(m)));
-    },
-    warn(...msg) {
-        log.warn(...msg.map((m) => chalk.yellow(m)));
-    },
-    success(...msg) {
-        log.info(...msg.map((m) => chalk.green(m)));
-    },
-};
 
 function generateSafeFilename(name) {
     return name
@@ -559,31 +854,6 @@ function generateIdentifierSafeName(name) {
         return fallback || 'pake-app';
     }
     return cleaned;
-}
-
-/**
- * Error class used for user-facing CLI errors.
- *
- * The top-level catch in `bin/cli.ts` prints `message` directly without a
- * stack trace and exits with the code mapped from `code` (see
- * ERROR_EXIT_CODES in utils/output.ts). Use this for predictable failures
- * (invalid names, missing files, etc.) so users see a clean message instead
- * of a Node.js stack dump. `code` and `hint` also feed the `--json` result.
- */
-class PakeError extends Error {
-    constructor(message, options) {
-        super(message);
-        this.isUserError = true;
-        this.name = 'PakeError';
-        this.code = options?.code;
-        this.hint = options?.hint;
-    }
-}
-function isPakeError(error) {
-    return (error instanceof PakeError ||
-        (typeof error === 'object' &&
-            error !== null &&
-            error.isUserError === true));
 }
 
 const LINUX_TARGET_TYPES = ['deb', 'appimage', 'rpm', 'zst'];
@@ -688,8 +958,11 @@ async function stageLocalTree(sourceDir) {
     const resolvedPackage = await fsExtra
         .realpath(npmDirectory)
         .catch(() => path.resolve(npmDirectory));
+    const installedPackage = await fsExtra.realpath(packageDirectory);
     const packageDist = path.join(resolvedPackage, 'dist');
-    if (resolvedSource === resolvedPackage ||
+    if (resolvedSource === installedPackage ||
+        installedPackage.startsWith(resolvedSource + path.sep) ||
+        resolvedSource === resolvedPackage ||
         resolvedPackage.startsWith(resolvedSource + path.sep) ||
         resolvedSource === packageDist ||
         resolvedSource.startsWith(packageDist + path.sep)) {
@@ -1041,6 +1314,34 @@ async function mergeConfig(url, options, tauriConf) {
     await writeAllConfigs(tauriConf, platform);
 }
 
+// Load configs from npm package directory, not from project source
+const tauriSrcDir = path.join(npmDirectory, 'src-tauri');
+const pakeConf = fsExtra.readJSONSync(path.join(tauriSrcDir, 'pake.json'));
+const CommonConf = fsExtra.readJSONSync(path.join(tauriSrcDir, 'tauri.conf.json'));
+const WinConf = fsExtra.readJSONSync(path.join(tauriSrcDir, 'tauri.windows.conf.json'));
+const MacConf = fsExtra.readJSONSync(path.join(tauriSrcDir, 'tauri.macos.conf.json'));
+const LinuxConf = fsExtra.readJSONSync(path.join(tauriSrcDir, 'tauri.linux.conf.json'));
+const platformConfigs = {
+    win32: WinConf,
+    darwin: MacConf,
+    linux: LinuxConf,
+};
+const { platform: platform$1 } = process;
+// @ts-ignore
+const platformConfig = platformConfigs[platform$1];
+let tauriConfig = {
+    ...CommonConf,
+    bundle: platformConfig.bundle,
+    app: {
+        ...CommonConf.app,
+        trayIcon: {
+            ...(platformConfig?.app?.trayIcon ?? {}),
+        },
+    },
+    build: CommonConf.build,
+    pake: pakeConf,
+};
+
 /**
  * Returns build environment variables overrides for macOS, where Rust crates
  * sometimes need explicit C/C++ flags and a deterministic SDK target. Other
@@ -1132,11 +1433,12 @@ async function detectPackageManager() {
     return 'pnpm';
 }
 function getInstallCommand(packageManager, useCnMirror) {
-    const registryOption = useCnMirror
-        ? ' --registry=https://registry.npmmirror.com'
-        : '';
-    const peerDepsOption = packageManager === 'npm' ? ' --legacy-peer-deps' : '';
-    return `cd "${npmDirectory}" && ${packageManager} install${registryOption}${peerDepsOption}`;
+    const args = ['install'];
+    if (useCnMirror)
+        args.push('--registry=https://registry.npmmirror.com');
+    if (packageManager === 'npm')
+        args.push('--legacy-peer-deps');
+    return { executable: packageManager, args };
 }
 async function copyFileWithSamePathGuard(sourcePath, destinationPath) {
     if (path.resolve(sourcePath) === path.resolve(destinationPath)) {
@@ -1268,7 +1570,7 @@ class BaseBuilder {
     }
     async prepare() {
         const tauriSrcPath = path.join(npmDirectory, 'src-tauri');
-        const tauriTargetPath = path.join(tauriSrcPath, 'target');
+        const tauriTargetPath = this.getCargoTargetDir();
         const tauriTargetPathExists = await fsExtra.pathExists(tauriTargetPath);
         if (!IS_MAC && !tauriTargetPathExists) {
             logger.warn('✼ The first use requires installing system dependencies.');
@@ -1297,9 +1599,21 @@ class BaseBuilder {
                 });
             }
         }
-        const spinner = getSpinner('Installing package...');
         const useCnMirror = isCnMirrorEnabled();
         await configureCargoRegistry(tauriSrcPath, useCnMirror);
+        // Workspaces reuse installed dependencies. Reinstalling through their
+        // node_modules link would mutate the shared CLI installation.
+        if (await hasReadyTauriCli(npmDirectory)) {
+            return;
+        }
+        // Dependencies may disappear after the workspace linked them. Reinstall
+        // privately even in that case, without writing through to the source tree.
+        const modules = path.join(npmDirectory, 'node_modules');
+        if (npmDirectory !== packageDirectory &&
+            (await fsExtra.lstat(modules).catch(() => null))?.isSymbolicLink()) {
+            await fsExtra.unlink(modules);
+        }
+        const spinner = getSpinner('Installing package...');
         const packageManager = await detectPackageManager();
         const timeout = getInstallTimeout();
         const buildEnv = getBuildEnvironment();
@@ -1335,23 +1649,24 @@ class BaseBuilder {
     }
     async start(url) {
         logger.info('Pake dev server starting...');
-        await mergeConfig(url, this.options, tauriConfig);
+        await mergeConfig(url, this.options, structuredClone(tauriConfig));
         const packageManager = await detectPackageManager();
         const configPath = path.join(npmDirectory, 'src-tauri', '.pake', 'tauri.conf.json');
         const features = this.getBuildFeatures();
-        const featureArgs = features.length > 0 ? `--features ${features.join(',')}` : '';
-        const argSeparator = packageManager === 'npm' ? ' --' : '';
-        const command = `cd "${npmDirectory}" && ${packageManager} run tauri${argSeparator} dev --config "${configPath}" ${featureArgs}`;
-        await shellExec(command);
+        const args = ['run', 'tauri'];
+        if (packageManager === 'npm')
+            args.push('--');
+        args.push('dev', '--config', configPath);
+        if (features.length > 0)
+            args.push('--features', features.join(','));
+        await shellExec({ executable: packageManager, args });
     }
     async buildAndCopy(url, target, logSuccess = true) {
         const { name = 'pake-app' } = this.options;
-        await mergeConfig(url, this.options, tauriConfig);
+        await mergeConfig(url, this.options, structuredClone(tauriConfig));
         const packageManager = await detectPackageManager();
         // Build app
         const buildSpinner = getSpinner('Building app...');
-        // Let spinner run for a moment so user can see it, then stop before package manager command
-        await new Promise((resolve) => setTimeout(resolve, 500));
         buildSpinner.stop();
         // Show static message to keep the status visible. Info, not warn: warn
         // entries feed the --json warnings array and this is a status line.
@@ -1368,7 +1683,7 @@ class BaseBuilder {
         if (isLinuxAppImage && !buildEnv.NO_STRIP && this.options.debug) {
             logger.warn('⚠ AppImage strip step can fail on glibc 2.38+; Pake will auto-retry with NO_STRIP=1.');
         }
-        const buildCommand = `cd "${npmDirectory}" && ${this.getBuildCommand(packageManager)}`;
+        const buildCommand = this.getBuildCommand(packageManager);
         const buildTimeout = getBuildTimeout();
         try {
             await shellExec(buildCommand, buildTimeout, resolveExecEnv());
@@ -1476,24 +1791,23 @@ class BaseBuilder {
         return BaseBuilder.ARCH_DISPLAY_NAMES[arch] || arch;
     }
     buildBaseCommand(packageManager, configPath, target) {
-        const baseCommand = this.options.debug
-            ? `${packageManager} run build:debug`
-            : `${packageManager} run build`;
-        const argSeparator = packageManager === 'npm' ? ' --' : '';
-        let fullCommand = `${baseCommand}${argSeparator} -c "${configPath}"`;
+        const args = ['run', this.options.debug ? 'build:debug' : 'build'];
+        if (packageManager === 'npm')
+            args.push('--');
+        args.push('-c', configPath);
         if (target) {
-            fullCommand += ` --target ${target}`;
+            args.push('--target', target);
         }
         // Enable verbose output in debug mode to help diagnose build issues.
         // This provides detailed logs from Tauri CLI and bundler tools.
         if (this.options.debug) {
-            fullCommand += ' --verbose';
+            args.push('--verbose');
         }
         const features = this.getBuildFeatures();
         if (features.length > 0) {
-            fullCommand += ` --features ${features.join(',')}`;
+            args.push('--features', features.join(','));
         }
-        return fullCommand;
+        return { executable: packageManager, args };
     }
     getBuildFeatures() {
         const features = ['cli-build'];
@@ -1509,10 +1823,10 @@ class BaseBuilder {
     getBuildCommand(packageManager = 'pnpm') {
         // Use temporary config directory to avoid modifying source files
         const configPath = path.join(npmDirectory, 'src-tauri', '.pake', 'tauri.conf.json');
-        let fullCommand = this.buildBaseCommand(packageManager, configPath);
+        const fullCommand = this.buildBaseCommand(packageManager, configPath);
         // For macOS, use app bundles by default unless DMG is explicitly requested
         if (IS_MAC && this.options.targets === 'app') {
-            fullCommand += ' --bundles app';
+            fullCommand.args.push('--bundles', 'app');
         }
         return fullCommand;
     }
@@ -1663,7 +1977,7 @@ class MacBuilder extends BaseBuilder {
         else {
             arch = this.getArchDisplayName(this.resolveTargetArch(this.buildArch));
         }
-        return `${name}_${tauriConfig.version}_${arch}`;
+        return `${name}_${this.options.appVersion}_${arch}`;
     }
     getReportArch() {
         return this.getActualArch();
@@ -1726,9 +2040,9 @@ class WinBuilder extends BaseBuilder {
     }
     getFileName() {
         const { name } = this.options;
-        const language = tauriConfig.bundle.windows.wix.language[0];
+        const language = this.options.installerLanguage;
         const targetArch = this.getArchDisplayName(this.buildArch);
-        return `${name}_${tauriConfig.version}_${targetArch}_${language}`;
+        return `${name}_${this.options.appVersion}_${targetArch}_${language}`;
     }
     getBuildCommand(packageManager = 'pnpm') {
         const configPath = path.join('src-tauri', '.pake', 'tauri.conf.json');
@@ -1784,7 +2098,7 @@ class LinuxBuilder extends BaseBuilder {
     }
     getFileName() {
         const { name = 'pake-app', targets } = this.options;
-        const version = tauriConfig.version;
+        const version = this.options.appVersion;
         const buildType = this.currentBuildType || targets.split(',').map((t) => t.trim())[0];
         let arch;
         if (this.buildArch === 'arm64') {
@@ -1862,7 +2176,7 @@ class LinuxBuilder extends BaseBuilder {
         ];
         for (const { tool, pacmanPackage } of requiredTools) {
             try {
-                await shellExec(`command -v ${tool} >/dev/null 2>&1`);
+                await execa(tool, ['--version'], { stdio: 'ignore' });
             }
             catch {
                 throw new Error(`Building a zst package requires "${tool}". Install it first, e.g. "sudo pacman -S ${pacmanPackage}".`);
@@ -1872,24 +2186,30 @@ class LinuxBuilder extends BaseBuilder {
     async createArchPackageFromDeb({ removeSourceDeb, }) {
         const { name = 'pake-app' } = this.options;
         const packageName = generateLinuxPackageName(name);
-        const version = tauriConfig.version;
+        const version = this.options.appVersion;
         const arch = this.buildArch === 'arm64' ? 'aarch64' : 'x86_64';
         const debPath = path.resolve(`${name}.deb`);
         const packagePath = path.resolve(`${name}-${version}-1-${arch}.pkg.tar.zst`);
-        const workDir = path.resolve('.pake-arch-package');
+        await this.ensureArchPackagingTools();
+        const workDir = await fsExtra.mkdtemp(path.join(os.tmpdir(), 'pake-arch-'));
         const dataDir = path.join(workDir, 'data');
         const controlDir = path.join(workDir, 'control');
-        await this.ensureArchPackagingTools();
-        await fsExtra.remove(workDir);
-        await fsExtra.ensureDir(dataDir);
-        await fsExtra.ensureDir(controlDir);
         try {
-            await shellExec(`cd "${controlDir}" && ar x "${debPath}"`);
+            await fsExtra.ensureDir(dataDir);
+            await fsExtra.ensureDir(controlDir);
+            await shellExec({
+                executable: 'ar',
+                args: ['x', debPath],
+                cwd: controlDir,
+            });
             const dataArchive = (await fsExtra.readdir(controlDir)).find((file) => file.startsWith('data.tar'));
             if (!dataArchive) {
                 throw new Error(`Could not find data.tar payload in ${debPath}`);
             }
-            await shellExec(`tar -xf "${path.join(controlDir, dataArchive)}" -C "${dataDir}"`);
+            await shellExec({
+                executable: 'tar',
+                args: ['-xf', path.join(controlDir, dataArchive), '-C', dataDir],
+            });
             // Drop the desktop entry auto-generated by the Tauri deb bundler;
             // the payload already ships Pake's own com.pake.<name>.desktop.
             await fsExtra.remove(path.join(dataDir, 'usr', 'share', 'applications', `${packageName}.desktop`));
@@ -1929,7 +2249,19 @@ post_remove() {
   update-desktop-database -q usr/share/applications
 }
 `);
-            await shellExec(`bsdtar --zstd -cf "${packagePath}" -C "${dataDir}" .PKGINFO .INSTALL usr`);
+            await shellExec({
+                executable: 'bsdtar',
+                args: [
+                    '--zstd',
+                    '-cf',
+                    packagePath,
+                    '-C',
+                    dataDir,
+                    '.PKGINFO',
+                    '.INSTALL',
+                    'usr',
+                ],
+            });
             await this.recordArtifact(packagePath, 'zst');
             logger.success('✔ Build success!');
             logger.success('✔ App installer located in', packagePath);
@@ -1967,14 +2299,15 @@ post_remove() {
         const buildTarget = this.buildArch === 'arm64'
             ? (this.getTauriTarget(this.buildArch, 'linux') ?? undefined)
             : undefined;
-        let fullCommand = this.buildBaseCommand(packageManager, configPath, buildTarget);
+        const fullCommand = this.buildBaseCommand(packageManager, configPath, buildTarget);
         // --no-bundle: build the executable only, skipping .deb/.rpm/.appimage
         // packaging entirely (e.g. RPM-based distros where the bundler aborts).
         if (this.options.bundle === false) {
-            return `${fullCommand} --no-bundle`;
+            fullCommand.args.push('--no-bundle');
+            return fullCommand;
         }
         if (this.currentBuildType) {
-            fullCommand += ` --bundles ${this.currentBuildType}`;
+            fullCommand.args.push('--bundles', this.currentBuildType);
         }
         // Enable verbose output for AppImage builds when debugging or PAKE_VERBOSE is set.
         // AppImage builds often fail with minimal error messages from linuxdeploy,
@@ -1983,7 +2316,7 @@ post_remove() {
             (this.options.targets.includes('appimage') ||
                 this.options.debug ||
                 process.env.PAKE_VERBOSE)) {
-            fullCommand += ' --verbose';
+            fullCommand.args.push('--verbose');
         }
         return fullCommand;
     }
@@ -2831,7 +3164,6 @@ async function downloadIcon(iconUrl, showSpinner = true, customTimeout) {
         const response = await fetch(iconUrl, {
             signal: controller.signal,
         });
-        clearTimeout(timeoutId);
         if (!response.ok) {
             if (response.status === 404 && !showSpinner) {
                 return null;
@@ -2848,7 +3180,6 @@ async function downloadIcon(iconUrl, showSpinner = true, customTimeout) {
         return await saveIconFile(arrayBuffer, extension);
     }
     catch (error) {
-        clearTimeout(timeoutId);
         if (showSpinner) {
             if (error instanceof Error && error.name === 'AbortError') {
                 logger.error('Icon download timed out!');
@@ -2858,6 +3189,9 @@ async function downloadIcon(iconUrl, showSpinner = true, customTimeout) {
             }
         }
         return null;
+    }
+    finally {
+        clearTimeout(timeoutId);
     }
 }
 /**
@@ -3437,6 +3771,8 @@ program.action(async (urlArg, options) => {
     let phase = 'input';
     let appName = null;
     let url = urlArg;
+    let leaveWorkspace;
+    let endCancellation;
     try {
         // Heal a dist_bak stranded by an earlier crashed local-input run before
         // building, or this build would embed that run's staged files.
@@ -3483,13 +3819,22 @@ program.action(async (urlArg, options) => {
         if (options.debug) {
             log.setLevel('debug');
         }
+        endCancellation = beginBuildCancellation();
+        phase = 'prepare';
+        leaveWorkspace = await enterBuildWorkspace();
+        phase = 'input';
         const appOptions = await handleOptions(options, url);
+        throwIfBuildCancelled();
         appName = appOptions.name ?? null;
         const builder = BuilderProvider.create(appOptions);
         phase = 'prepare';
         await builder.prepare();
+        throwIfBuildCancelled();
         phase = 'build';
         await builder.build(url);
+        throwIfBuildCancelled();
+        await leaveWorkspace();
+        leaveWorkspace = undefined;
         if (jsonMode) {
             printJsonResult({
                 ok: true,
@@ -3507,6 +3852,10 @@ program.action(async (urlArg, options) => {
         // exitCode 0; a clean commander exit is not a failure.
         if (isCommanderExit(error) && error.exitCode === 0) {
             return;
+        }
+        if (leaveWorkspace) {
+            await leaveWorkspace();
+            leaveWorkspace = undefined;
         }
         const classified = classifyError(error, phase);
         if (jsonMode) {
@@ -3540,10 +3889,14 @@ program.action(async (urlArg, options) => {
         process.exitCode = ERROR_EXIT_CODES[classified.code];
     }
     finally {
-        // A local-input run replaces the package's own dist/ during staging; put
-        // it back so the CLI stays intact and later builds cannot embed this
-        // user's files.
-        restoreLocalTree();
+        // Failed builds discard their private inputs without touching the package.
+        try {
+            if (leaveWorkspace)
+                await leaveWorkspace();
+        }
+        finally {
+            endCancellation?.();
+        }
     }
 });
 program.parseAsync().catch((error) => {

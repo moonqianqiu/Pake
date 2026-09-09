@@ -109,13 +109,15 @@ jobs:
       - name: Verify published version
         run: |
           VERSION="$(node -p "require('./package.json').version")"
-          for attempt in {1..12}; do
+          # npm scans new versions before exposing them, typically for several
+          # minutes and sometimes longer than 15 minutes. Do not republish.
+          for attempt in {1..120}; do
             PUBLISHED="$(npm view "pake-cli@${VERSION}" version --registry=https://registry.npmjs.org 2>/dev/null || true)"
             if [ "$PUBLISHED" = "$VERSION" ]; then
               echo "Published pake-cli@${VERSION}"
               exit 0
             fi
-            echo "Waiting for npm registry to expose pake-cli@${VERSION} (attempt ${attempt}/12)"
+            echo "Waiting for npm registry to expose pake-cli@${VERSION} (attempt ${attempt}/120)"
             sleep 10
           done
           echo "pake-cli@${VERSION} was not visible in npm registry after publish"

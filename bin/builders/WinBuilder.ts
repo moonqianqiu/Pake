@@ -1,8 +1,8 @@
 import path from 'path';
 import BaseBuilder from './BaseBuilder';
 import { PakeAppOptions } from '@/types';
-import tauriConfig from '@/helpers/tauriConfig';
 import { generateIdentifierSafeName } from '@/utils/name';
+import type { ShellCommand } from '@/utils/shell';
 
 export default class WinBuilder extends BaseBuilder {
   private buildFormat: string = 'msi';
@@ -23,12 +23,12 @@ export default class WinBuilder extends BaseBuilder {
 
   getFileName(): string {
     const { name } = this.options;
-    const language = tauriConfig.bundle.windows.wix.language[0];
+    const language = this.options.installerLanguage;
     const targetArch = this.getArchDisplayName(this.buildArch);
-    return `${name}_${tauriConfig.version}_${targetArch}_${language}`;
+    return `${name}_${this.options.appVersion}_${targetArch}_${language}`;
   }
 
-  protected getBuildCommand(packageManager: string = 'pnpm'): string {
+  protected getBuildCommand(packageManager: string = 'pnpm'): ShellCommand {
     const configPath = path.join('src-tauri', '.pake', 'tauri.conf.json');
     const buildTarget = this.getTauriTarget(this.buildArch, 'win32');
 
