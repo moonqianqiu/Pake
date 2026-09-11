@@ -1,7 +1,7 @@
 use crate::app::config::PakeConfig;
 use crate::util::{
-    check_file_or_append, get_data_dir, get_download_message_with_lang, sanitize_download_filename,
-    show_toast, MessageType,
+    check_file_or_append, get_data_dir, get_download_dir, get_download_message_with_lang,
+    sanitize_download_filename, show_toast, MessageType,
 };
 #[cfg(target_os = "macos")]
 use dispatch::Queue;
@@ -177,6 +177,31 @@ struct WindowBuildOptions<'a> {
     url: WebviewUrl,
     visible: bool,
     new_window_features: Option<NewWindowFeatures>,
+}
+
+fn is_blank_popup_url(url: &Url) -> bool {
+    url.scheme() == "about" && url.path() == "blank"
+}
+
+#[cfg(test)]
+mod popup_tests {
+    use super::is_blank_popup_url;
+    use tauri::Url;
+
+    #[test]
+    fn only_blank_documents_get_the_default_popup_exception() {
+        for input in ["about:blank", "about:blank#download", "about:blank?pending"] {
+            assert!(is_blank_popup_url(&Url::parse(input).unwrap()));
+        }
+        for input in [
+            "https://example.com/",
+            "about:srcdoc",
+            "about:blankness",
+            "file:///tmp/file",
+        ] {
+            assert!(!is_blank_popup_url(&Url::parse(input).unwrap()));
+        }
+    }
 }
 
 fn open_requested_window(
@@ -472,11 +497,17 @@ fn build_window(
         window_builder = window_builder.disable_drag_drop_handler();
     }
 
-    if window_config.new_window {
+    {
+        let allow_new_window = window_config.new_window;
         let app_handle = app.clone();
         let popup_config = config.clone();
         let popup_tauri_config = tauri_config.clone();
         window_builder = window_builder.on_new_window(move |target_url, features| {
+            // Even without --new-window, two-stage popups need a real webview
+            // with our download delegate, never a proxy for the main window.
+            if !allow_new_window && !is_blank_popup_url(&target_url) {
+                return NewWindowResponse::Deny;
+            }
             match open_requested_window(
                 &app_handle,
                 &popup_config,
@@ -494,9 +525,8 @@ fn build_window(
     }
 
     // Add initialization scripts. Order matters: pakeConfig must land before
-    // any script that reads it (e.g. fullscreen polyfill checks for an opt-out
-    // flag), and toast must register `window.pakeToast` before Rust code
-    // calls show_toast().
+    // any script that reads it, and toast must register `window.pakeToast`
+    // before Rust code calls show_toast().
     window_builder = window_builder
         .initialization_script_for_all_frames(&config_script)
         .initialization_script_for_all_frames(include_str!("../inject/link_policy.js"))
@@ -513,9 +543,17 @@ fn build_window(
         window_builder = window_builder.initialization_script(include_str!("../inject/find.js"));
     }
 
+    window_builder = window_builder.initialization_script(include_str!("../inject/toast.js"));
+
+    // WebView2's native Fullscreen API already drives Tauri's window fullscreen.
+    // Keep its top-layer layout and player controls instead of overriding the API.
+    #[cfg(not(target_os = "windows"))]
+    {
+        window_builder =
+            window_builder.initialization_script(include_str!("../inject/fullscreen.js"));
+    }
+
     window_builder = window_builder
-        .initialization_script(include_str!("../inject/toast.js"))
-        .initialization_script(include_str!("../inject/fullscreen.js"))
         .initialization_script(include_str!("../inject/event.js"))
         .initialization_script(include_str!("../inject/style.js"))
         .initialization_script(include_str!("../inject/theme_refresh.js"))
@@ -652,7 +690,7 @@ fn build_window(
     }
 
     // Capture webview-initiated downloads (blob:, data:, Content-Disposition,
-    // etc.) and write them to the OS Downloads folder. This is essential for
+    // etc.) and write them to the configured download folder. This is essential for
     // sites with a strict Content-Security-Policy (e.g. Gemini): their
     // `connect-src` blocks Tauri's IPC origin, so downloads cannot be routed
     // through the JS bridge, and downloads triggered from a sandboxed iframe
@@ -662,7 +700,7 @@ fn build_window(
         let download_handle = app.clone();
         window_builder = window_builder.on_download(move |webview, event| match event {
             DownloadEvent::Requested { url, destination } => {
-                match download_handle.path().download_dir() {
+                match get_download_dir(&download_handle) {
                     Ok(download_dir) => {
                         let filename = destination
                             .file_name()
@@ -679,10 +717,23 @@ fn build_window(
                         let target = download_dir.join(sanitize_download_filename(&filename));
                         if let Some(path_str) = target.to_str() {
                             *destination = PathBuf::from(check_file_or_append(path_str));
+                        } else {
+                            eprintln!("[Pake] Download destination is not valid UTF-8");
+                            return false;
                         }
                     }
                     Err(error) => {
                         eprintln!("[Pake] Failed to resolve download dir: {error}");
+                        if let Some(window) = download_handle.get_webview_window(webview.label()) {
+                            show_toast(
+                                &window,
+                                &get_download_message_with_lang(
+                                    MessageType::DirectoryFailure,
+                                    None,
+                                ),
+                            );
+                        }
+                        return false;
                     }
                 }
                 true
