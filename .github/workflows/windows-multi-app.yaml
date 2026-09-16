@@ -1,9 +1,5 @@
 name: Build Multi Apps (Windows Only)
 
-env:
-  NODE_VERSION: "22"
-  PNPM_VERSION: "10.26.2"
-
 on:
   workflow_dispatch:
 
@@ -20,9 +16,27 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 180
 
+    env:
+      # App list: edit here to add/remove apps. Set "enabled": false to skip one.
+      APPS_JSON: |
+        [
+          { "title": "DouBao",      "name": "DouBao",      "url": "https://www.doubao.com/chat",    "icon": "https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/doubao.png",     "enabled": true },
+          { "title": "HunYuan",     "name": "HunYuan",     "url": "https://aistudio.tencent.ai",    "icon": "https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/hunyuan.png",    "enabled": true },
+          { "title": "YuanBao",     "name": "YuanBao",     "url": "https://yuanbao.tencent.com/chat",    "icon": "https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/yuanbao.png",     "enabled": true },
+          { "title": "ChatGLM",     "name": "ChatGLM",     "url": "https://chatglm.cn",             "icon": "https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/qingyan.png",    "enabled": true },
+          { "title": "TongYi",      "name": "TongYi",      "url": "https://www.qianwen.com/",       "icon": "https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/tongyi.png",     "enabled": true },
+          { "title": "Kimi",        "name": "Kimi",        "url": "https://www.kimi.com",           "icon": "https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/kimi.png",       "enabled": true },
+          { "title": "Qwen",        "name": "Qwen",        "url": "https://chat.qwen.ai",           "icon": "https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/qwen.png",       "enabled": true },
+          { "title": "Z",           "name": "Z",           "url": "https://chat.z.ai",              "icon": "https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/zai.png",        "enabled": true },
+          { "title": "Minimax",     "name": "Minimax",     "url": "https://agent.minimaxi.com",     "icon": "https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/minimax.png",    "enabled": true },
+          { "title": "HuggingChat", "name": "HuggingChat", "url": "https://huggingface.co/chat",    "icon": "https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/huggingface.png","enabled": true },
+          { "title": "MIMO",        "name": "MIMO",        "url": "https://aistudio.xiaomimimo.com","icon": "https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/xiaomimimo.png", "enabled": true },
+          { "title": "Copilot",     "name": "Copilot",     "url": "https://copilot.microsoft.com",  "icon": "https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/copilot.png",    "enabled": false }
+        ]
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Environment
         uses: ./.github/actions/setup-env
@@ -43,16 +57,12 @@ jobs:
         shell: pwsh
         timeout-minutes: 160
         run: |
-          $apps = @(
-            @{ title="DouBao";      name="DouBao";      url="https://www.doubao.com/chat";    icon="https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/doubao_128.ico" },
-            @{ title="Kimi";        name="Kimi";        url="https://www.kimi.com";            icon="https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/kimi_128.ico" },
-            @{ title="Qwen";        name="Qwen";        url="https://chat.qwen.ai";            icon="https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/qwen_128.ico" },
-            @{ title="Z";           name="Z";           url="https://chat.z.ai";               icon="https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/z_128.ico" },
-            @{ title="Minimax";     name="Minimax";     url="https://agent.minimaxi.com";      icon="https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/minimax_128.ico" },
-            @{ title="HuggingChat"; name="HuggingChat"; url="https://huggingface.co/chat";     icon="https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/huggingface_128.ico" },
-            @{ title="MIMO";        name="MIMO";        url="https://aistudio.xiaomimimo.com"; icon="https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/MIMO_128.ico" },
-            # @{ title="Copilot";     name="Copilot";     url="https://copilot.microsoft.com";   icon="https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/copilot_128.ico" }
-          )
+          # App list comes from the job-level APPS_JSON env; entries with
+          # "enabled": false are skipped, so commenting out an app is unnecessary
+          $apps = $env:APPS_JSON | ConvertFrom-Json | Where-Object { $_.enabled -ne $false }
+
+          if (-not $apps -or @($apps).Count -eq 0) { throw "No enabled apps in APPS_JSON" }
+          Write-Host "Apps to build: $(@($apps | ForEach-Object { $_.title }) -join ', ')"
 
           New-Item -Path "output\windows" -ItemType Directory -Force | Out-Null
 
@@ -118,24 +128,32 @@ jobs:
             Write-Host "Using releaseDir: $releaseDir"
 
             # EXE selection:
-            # - First: pick an exe whose name contains app.name or app.title, and was written after the build started
-            # - Fallback: pick the newest exe written after the build started
-            $exeCandidatesAll = Get-ChildItem -Path $releaseDir -Filter "*.exe" -ErrorAction SilentlyContinue |
-              Where-Object { $_.LastWriteTime -ge $before.AddSeconds(-10) } |
-              Sort-Object LastWriteTime -Descending
-
-            $k1 = $app.name.ToLower()
-            $k2 = $app.title.ToLower()
-
-            $exe = $exeCandidatesAll |
-              Where-Object {
-                $n = $_.Name.ToLower()
-                ($n -like "*$k1*") -or ($n -like "*$k2*")
-              } |
-              Select-Object -First 1
+            # - First: deterministic path <releaseDir>\<name>.exe (the CLI names the exe after --name)
+            # - Fallback: newest exe written after the build started whose name matches, else newest
+            $exe = $null
+            $deterministic = Join-Path $releaseDir "$($app.name).exe"
+            if (Test-Path $deterministic) {
+              $exe = Get-Item $deterministic
+            }
 
             if (-not $exe) {
-              $exe = $exeCandidatesAll | Select-Object -First 1
+              $exeCandidatesAll = Get-ChildItem -Path $releaseDir -Filter "*.exe" -ErrorAction SilentlyContinue |
+                Where-Object { $_.LastWriteTime -ge $before.AddSeconds(-10) } |
+                Sort-Object LastWriteTime -Descending
+
+              $k1 = $app.name.ToLower()
+              $k2 = $app.title.ToLower()
+
+              $exe = $exeCandidatesAll |
+                Where-Object {
+                  $n = $_.Name.ToLower()
+                  ($n -like "*$k1*") -or ($n -like "*$k2*")
+                } |
+                Select-Object -First 1
+
+              if (-not $exe) {
+                $exe = $exeCandidatesAll | Select-Object -First 1
+              }
             }
 
             if (-not $exe) {
@@ -155,12 +173,18 @@ jobs:
             Copy-Item $exe.FullName -Destination (Join-Path $tmpDir "$($app.title).exe") -Force
             Compress-Archive -Path (Join-Path $tmpDir "*") -DestinationPath $zipPath -Force
 
+            # Verify the zip exists and is not empty
+            if (-not (Test-Path $zipPath)) { throw "ZIP was not created: $zipPath" }
+            $zipItem = Get-Item $zipPath
+            if ($zipItem.Length -lt 1MB) { throw "ZIP suspiciously small ($($zipItem.Length) bytes): $zipPath" }
+
             # Keep repo clean (if tooling changes lockfiles)
             if (Test-Path "src-tauri/Cargo.lock") {
-              git restore --worktree --staged src-tauri/Cargo.lock 2>$null | Out-Null
+              git checkout -- src-tauri/Cargo.lock
             }
 
-            Write-Host "Done: $zipPath (from $($exe.FullName))"
+            $elapsed = ((Get-Date) - $before).ToString("hh\:mm\:ss")
+            Write-Host "Done in $elapsed : $zipPath ($('{0:N1}' -f ($zipItem.Length / 1MB)) MB, from $($exe.FullName))"
           }
 
       - name: sccache stats
@@ -174,7 +198,7 @@ jobs:
           }
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: windows-multi-apps-${{ github.run_number }}-${{ github.sha }}
           path: output/windows/*.zip
