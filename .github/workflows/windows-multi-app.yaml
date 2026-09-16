@@ -76,7 +76,9 @@ jobs:
             Write-Host "Building: $($app.title)"
             Write-Host "=============================="
 
-            $zipPath = "output\windows\$($app.title)_x64.zip"
+            # No arch suffix in the name, so "extract each to its own folder"
+            # creates a folder named exactly after the app
+            $zipPath = "output\windows\$($app.title).zip"
             if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
 
             # Clear possible bundle dirs before build
