@@ -22,7 +22,6 @@ jobs:
         [
           { "title": "DouBao",      "name": "DouBao",      "url": "https://www.doubao.com/chat",    "icon": "https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/doubao.png",     "enabled": true },
           { "title": "HunYuan",     "name": "HunYuan",     "url": "https://aistudio.tencent.ai",    "icon": "https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/hunyuan.png",    "enabled": true },
-          { "title": "YuanBao",     "name": "YuanBao",     "url": "https://yuanbao.tencent.com/chat",    "icon": "https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/yuanbao.png",     "enabled": true },
           { "title": "ChatGLM",     "name": "ChatGLM",     "url": "https://chatglm.cn",             "icon": "https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/qingyan.png",    "enabled": true },
           { "title": "TongYi",      "name": "TongYi",      "url": "https://www.qianwen.com/",       "icon": "https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/tongyi.png",     "enabled": true },
           { "title": "Kimi",        "name": "Kimi",        "url": "https://www.kimi.com",           "icon": "https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/kimi.png",       "enabled": true },
