@@ -30,6 +30,7 @@ jobs:
           { "title": "Minimax",     "name": "Minimax",     "url": "https://agent.minimaxi.com",     "icon": "https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/minimax.png",    "enabled": true },
           { "title": "HuggingChat", "name": "HuggingChat", "url": "https://huggingface.co/chat",    "icon": "https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/huggingface.png","enabled": true },
           { "title": "MIMO",        "name": "MIMO",        "url": "https://aistudio.xiaomimimo.com","icon": "https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/xiaomimimo.png", "enabled": true },
+          { "title": "StepFun",     "name": "StepFun",     "url": "https://studio.stepfun.com",     "icon": "https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/stepfun.png",    "enabled": true },
           { "title": "Copilot",     "name": "Copilot",     "url": "https://copilot.microsoft.com",  "icon": "https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/copilot.png",    "enabled": false }
         ]
 
