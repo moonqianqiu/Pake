@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import { program, Option } from 'commander';
+import { program, InvalidArgumentError, Option } from 'commander';
 import packageJson from '../../package.json';
 import { DEFAULT_PAKE_OPTIONS as DEFAULT } from '../defaults';
 import { validateNumberInput, validateUrlInput } from '../utils/validate';
@@ -113,6 +113,12 @@ ${green('|_|   \\__,_|_|\\_\\___|  can turn any webpage into a desktop app with 
     )
     .addOption(
       new Option(
+        '--windows-toolchain <toolchain>',
+        'Windows Rust toolchain: msvc (default, requires Visual Studio Build Tools) or gnu (MinGW/MSYS2, for machines without them)',
+      ).choices(['msvc', 'gnu']),
+    )
+    .addOption(
+      new Option(
         '--app-version <string>',
         'App version, the same as package.json version',
       )
@@ -167,7 +173,9 @@ ${green('|_|   \\__,_|_|\\_\\___|  can turn any webpage into a desktop app with 
           if (value === undefined) return true; // --hide-on-close without value
           if (value === 'true') return true;
           if (value === 'false') return false;
-          throw new Error('--hide-on-close must be true or false');
+          throw new InvalidArgumentError(
+            '--hide-on-close must be true or false',
+          );
         })
         .hideHelp(),
     )
@@ -255,7 +263,9 @@ ${green('|_|   \\__,_|_|\\_\\___|  can turn any webpage into a desktop app with 
         .argParser((value) => {
           const zoom = Number(value);
           if (!Number.isInteger(zoom) || zoom < 50 || zoom > 200) {
-            throw new Error('--zoom must be an integer between 50 and 200');
+            throw new InvalidArgumentError(
+              '--zoom must be an integer between 50 and 200',
+            );
           }
           return zoom;
         })

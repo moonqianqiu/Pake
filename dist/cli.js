@@ -19,7 +19,7 @@ import * as psl from 'psl';
 import { InvalidArgumentError, program as program$1, Option } from 'commander';
 
 var name = "pake-cli";
-var version = "3.16.4";
+var version = "3.17.1";
 var description = "🤱🏻 Turn any webpage into a desktop app with one command. 🤱🏻 一键打包网页生成轻量桌面应用。";
 var engines = {
 	node: ">=20.9.0"
@@ -787,6 +787,49 @@ function checkRustInstalled() {
         return false;
     }
 }
+function getVsWherePath() {
+    const programFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
+    return path.join(programFilesX86, 'Microsoft Visual Studio', 'Installer', 'vswhere.exe');
+}
+/**
+ * Detects Visual Studio Build Tools the way rustc itself does: via the VS
+ * installer's vswhere.exe, not PATH. cl.exe/link.exe are normally absent
+ * from PATH even on a fully working MSVC setup (rustc locates them through
+ * the same registry vswhere reads), so checking PATH directly would warn on
+ * most MSVC machines.
+ */
+function hasWindowsMsvcBuildTools() {
+    const vswhere = getVsWherePath();
+    if (!fsExtra.pathExistsSync(vswhere))
+        return false;
+    try {
+        const { stdout } = execaSync(vswhere, [
+            '-products',
+            '*',
+            '-requires',
+            'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
+            '-property',
+            'installationPath',
+        ]);
+        return stdout.trim().length > 0;
+    }
+    catch {
+        return false;
+    }
+}
+/**
+ * MinGW/MSYS2's gcc drives the GNU Windows target directly off PATH (no
+ * registry lookup involved), so a PATH check is the correct signal here.
+ */
+function hasWindowsGnuToolchain() {
+    try {
+        execaSync('gcc', ['--version'], { stdio: 'ignore' });
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
 
 async function combineFiles(files, output) {
     const contents = await Promise.all(files.map(async (file) => {
@@ -1362,6 +1405,40 @@ function getBuildEnvironment() {
     };
 }
 /**
+ * Build scripts and proc-macros compile for the rustup *host* toolchain, not
+ * the `--target` triple, even when cross-compiling. Pake's own
+ * rust-toolchain.toml pins a bare channel (no host), which rustup resolves
+ * against the machine's configured default host, msvc on most Windows
+ * installs, regardless of whether MSVC is actually present. Without this,
+ * a gnu `--target` build still shells out to the (possibly missing) MSVC
+ * `link.exe` for every build script. RUSTUP_TOOLCHAIN is rustup's documented
+ * per-invocation override (read by the cargo/rustc proxies it installs) and
+ * only affects this build subprocess. Left alone if the user already set it.
+ */
+function getWindowsGnuBuildEnvironment() {
+    const excludeAllSymbols = ['-C', 'link-args=-Wl,--exclude-all-symbols'];
+    const existingRustflags = process.env.RUSTFLAGS;
+    const existingEncodedRustflags = process.env.CARGO_ENCODED_RUSTFLAGS;
+    // Cargo prefers encoded flags over RUSTFLAGS, even when set to an empty value.
+    const flags = existingEncodedRustflags !== undefined
+        ? {
+            CARGO_ENCODED_RUSTFLAGS: [
+                ...(existingEncodedRustflags ? [existingEncodedRustflags] : []),
+                ...excludeAllSymbols,
+            ].join('\x1f'),
+        }
+        : {
+            RUSTFLAGS: [
+                ...(existingRustflags ? [existingRustflags] : []),
+                ...excludeAllSymbols,
+            ].join(' '),
+        };
+    return {
+        ...flags,
+        RUSTUP_TOOLCHAIN: process.env.RUSTUP_TOOLCHAIN || 'stable-x86_64-pc-windows-gnu',
+    };
+}
+/**
  * Windows needs more time due to native compilation and antivirus scanning.
  */
 function getInstallTimeout() {
@@ -1575,6 +1652,13 @@ class BaseBuilder {
             logger.warn('✼ See more in https://tauri.app/start/prerequisites/.');
         }
         ensureRustEnv();
+        if (IS_WIN &&
+            this.options.windowsToolchain !== 'gnu' &&
+            !hasWindowsMsvcBuildTools() &&
+            hasWindowsGnuToolchain()) {
+            logger.warn('✼ No Visual Studio Build Tools detected, but a MinGW/GNU toolchain (gcc) is available.');
+            logger.warn('✼ If the build fails to link, retry with --windows-toolchain gnu.');
+        }
         if (!checkRustInstalled()) {
             if (!isInteractive()) {
                 throw new PakeError('Rust required to package your webapp.', {
@@ -1675,8 +1759,10 @@ class BaseBuilder {
         // entries feed the --json warnings array and this is a status line.
         logger.info('✸ Building app...');
         const baseEnv = getBuildEnvironment();
+        const isWindowsGnuBuild = process.platform === 'win32' && this.options.windowsToolchain === 'gnu';
         let buildEnv = {
             ...(baseEnv ?? {}),
+            ...(isWindowsGnuBuild ? getWindowsGnuBuildEnvironment() : {}),
             ...(process.env.NO_STRIP ? { NO_STRIP: process.env.NO_STRIP } : {}),
         };
         const resolveExecEnv = () => Object.keys(buildEnv).length > 0 ? buildEnv : undefined;
@@ -2038,10 +2124,17 @@ class WinBuilder extends BaseBuilder {
         this.buildArch = validArchs.includes(options.targets || '')
             ? this.resolveTargetArch(options.targets)
             : this.resolveTargetArch('auto');
+        this.toolchain = options.windowsToolchain === 'gnu' ? 'gnu' : 'msvc';
         this.options.targets = this.buildFormat;
     }
     getReportArch() {
         return this.buildArch;
+    }
+    getTauriTarget(arch, platform = 'win32') {
+        if (this.toolchain === 'gnu') {
+            return WinBuilder.GNU_ARCH_MAPPINGS[arch] || null;
+        }
+        return super.getTauriTarget(arch, platform);
     }
     getFileName() {
         const { name } = this.options;
@@ -2082,6 +2175,12 @@ class WinBuilder extends BaseBuilder {
         return `pake-${generateIdentifierSafeName(appName)}.exe`;
     }
 }
+// MSYS2/MinGW only ships an x86_64 GCC toolchain, so gnu is x64-only;
+// arm64 falls through to getTauriTarget returning null, which the
+// existing call sites already turn into "Unsupported architecture".
+WinBuilder.GNU_ARCH_MAPPINGS = {
+    x64: 'x86_64-pc-windows-gnu',
+};
 
 class LinuxBuilder extends BaseBuilder {
     constructor(options) {
@@ -3537,6 +3636,7 @@ ${green('|_|   \\__,_|_|\\_\\___|  can turn any webpage into a desktop app with 
         .default(DEFAULT_PAKE_OPTIONS.userAgent)
         .hideHelp())
         .addOption(new Option('--targets <string>', 'Build target format for your system').default(DEFAULT_PAKE_OPTIONS.targets))
+        .addOption(new Option('--windows-toolchain <toolchain>', 'Windows Rust toolchain: msvc (default, requires Visual Studio Build Tools) or gnu (MinGW/MSYS2, for machines without them)').choices(['msvc', 'gnu']))
         .addOption(new Option('--app-version <string>', 'App version, the same as package.json version')
         .default(DEFAULT_PAKE_OPTIONS.appVersion)
         .hideHelp())
@@ -3570,7 +3670,7 @@ ${green('|_|   \\__,_|_|\\_\\___|  can turn any webpage into a desktop app with 
             return true;
         if (value === 'false')
             return false;
-        throw new Error('--hide-on-close must be true or false');
+        throw new InvalidArgumentError('--hide-on-close must be true or false');
     })
         .hideHelp())
         .addOption(new Option('--title <string>', 'Window title').hideHelp())
@@ -3612,7 +3712,7 @@ ${green('|_|   \\__,_|_|\\_\\___|  can turn any webpage into a desktop app with 
         .argParser((value) => {
         const zoom = Number(value);
         if (!Number.isInteger(zoom) || zoom < 50 || zoom > 200) {
-            throw new Error('--zoom must be an integer between 50 and 200');
+            throw new InvalidArgumentError('--zoom must be an integer between 50 and 200');
         }
         return zoom;
     })
@@ -3668,12 +3768,20 @@ const REJECTED_KEYS = new Set(['config', 'json', 'version']);
 const EXTRA_STRING_KEYS = new Set(['name', 'title', 'identifier']);
 // Numeric fields share the CLI flag ranges (see cli-program.ts validators),
 // so a config file cannot smuggle a value the same flag would reject.
+// Like --zoom, zoom must be an integer: pake.json stores it as a Rust u32.
 const NUMBER_RANGES = {
     width: { min: 0 },
     height: { min: 0 },
     minWidth: { min: 0 },
     minHeight: { min: 0 },
-    zoom: { min: 50, max: 200 },
+    zoom: { min: 50, max: 200, integer: true },
+};
+// Fields whose CLI flag restricts the value set (see the .choices() calls in
+// cli-program.ts), so a config file cannot smuggle a value the same flag
+// would reject. Without this, an unknown value falls through to the builder's
+// own fallback and silently produces the default behavior.
+const ENUM_VALUES = {
+    windowsToolchain: ['msvc', 'gnu'],
 };
 function expectedTypeFor(key) {
     if (key === 'inject')
@@ -3752,15 +3860,25 @@ async function loadConfigFile(configPath, validKeys) {
                 hint: 'See schema/pake.schema.json for field types.',
             });
         }
+        const allowed = ENUM_VALUES[key];
+        if (allowed && !allowed.includes(value)) {
+            throw new PakeError(`Config field "${key}" must be one of: ${allowed.join(', ')}.`, {
+                code: 'INVALID_INPUT',
+                hint: 'See schema/pake.schema.json for allowed values.',
+            });
+        }
         if (typeof value === 'number') {
             const range = NUMBER_RANGES[key];
             const min = range?.min ?? 0;
             const max = range?.max;
+            const integer = range?.integer === true;
             if (!Number.isFinite(value) ||
+                (integer && !Number.isInteger(value)) ||
                 value < min ||
                 (max !== undefined && value > max)) {
                 const bounds = max !== undefined ? `${min}-${max}` : `>= ${min}`;
-                throw new PakeError(`Config field "${key}" must be a finite number (${bounds}).`, {
+                const kind = integer ? 'an integer' : 'a finite number';
+                throw new PakeError(`Config field "${key}" must be ${kind} (${bounds}).`, {
                     code: 'INVALID_INPUT',
                     hint: 'See schema/pake.schema.json for field ranges.',
                 });
@@ -3968,6 +4086,19 @@ program.parseAsync().catch((error) => {
         // Parse errors (unknown option, invalid argument, missing value) are
         // invalid input. Commander already printed the message to stderr; in
         // json mode also emit the machine-readable result on stdout.
+        //
+        // Excess operands are almost always an unquoted value: `--name Google
+        // Translate` leaves `Translate` as a second operand, and commander's
+        // "too many arguments" names neither --name nor quoting, so the shape
+        // reads as "names with spaces are unsupported" (#1378).
+        const excessArguments = error.code === 'commander.excessArguments';
+        // Name the operand rather than asserting why it is there. Unquoting is the
+        // usual cause, but two bare URLs produce the same error and the quoting
+        // advice would be wrong for them.
+        const extraOperand = excessArguments ? program.args.slice(1)[0] : undefined;
+        const hint = excessArguments
+            ? `Unexpected extra argument${extraOperand ? ` "${extraOperand}"` : ''}. A value containing spaces must be quoted, for example --name "Google Translate".`
+            : 'Run pake --help for the accepted options.';
         if (process.argv.includes('--json')) {
             printJsonResult({
                 ok: false,
@@ -3979,9 +4110,14 @@ program.parseAsync().catch((error) => {
                 error: {
                     code: 'INVALID_INPUT',
                     message: error.message.trim(),
-                    hint: 'Run pake --help for the accepted options.',
+                    hint,
                 },
             });
+        }
+        else if (excessArguments) {
+            // Commander has already written its message and the full help, so this
+            // lands last, which is where the eye goes after a wall of help text.
+            console.error(chalk.red(`\u2715 ${hint}`));
         }
         process.exitCode = ERROR_EXIT_CODES.INVALID_INPUT;
         return;
