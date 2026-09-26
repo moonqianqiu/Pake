@@ -1,6 +1,6 @@
 # AGENTS.md - Pake Project Knowledge Base
 
-> Project-specific Rust + Tauri rules: `.claude/rules/rust.md`. Skills live under `.agents/skills/` (`/release`, `/bugs`, `/github-ops`, `/code-review`; `.claude/skills/*` are symlinks into `.agents/skills/`, edit the `.agents` copy only). Exception: the `pake` skill's real source is `plugins/pake/skills/pake/SKILL.md` (shipped to users via the Claude Code and Codex plugin marketplaces, `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`); `.agents/skills/pake` is a symlink to it.
+> Project-specific Rust + Tauri rules: `.claude/rules/rust.md`. Skills live under `.agents/skills/` (`/release`; `.claude/skills/*` are symlinks into `.agents/skills/`, edit the `.agents` copy only). Exception: the `pake` skill's real source is `plugins/pake/skills/pake/SKILL.md` (shipped to users via the Claude Code and Codex plugin marketplaces, `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`); `.agents/skills/pake` is a symlink to it.
 
 ## Project Identity
 
@@ -24,7 +24,7 @@ Pake/
 │   ├── Cargo.toml        # Rust dependencies and version
 │   ├── tauri.conf.json   # Tauri configuration and version
 │   └── .cargo/           # Cargo configuration (gitignored)
-├── .agents/skills/        # Agent skills (/release, /bugs, /github-ops, /code-review); .claude/skills/* symlinks here
+├── .agents/skills/        # Agent skills (/release); .claude/skills/* symlinks here
 ├── dist/                 # Compiled CLI output
 ├── docs/                 # Documentation
 │   ├── cli-usage.md      # CLI parameters
@@ -72,9 +72,17 @@ Goals and project facts only; trust the agent to find its own path.
 - Generated areas (`dist/`, `node_modules/`, `src-tauri/target/`, `.app/`, `src-tauri/icons/`, `src-tauri/png/`) are not source. Exception: `dist/cli.js` is the shipped CLI build artifact (see `package.json` `files`); rebuild it via `pnpm run cli:build` and commit the regenerated file alongside the source change. Two things trigger a rebuild, not one: any change under `bin/`, and **any** change to `package.json`. Rollup inlines the whole manifest, so a dependency bump, a `pnpm.overrides` edit, an `engines` change, or a reworded `description` all leave `dist/cli.js` stale with no `bin/` diff to hint at it. Dependency-only PRs are the usual place this is missed.
 - Release status, issue closeout, npm delivery, and GitHub assets are separate truth surfaces. Verify each one live (source commit/tag, workflow run, npm registry, GitHub Release/assets, issue state); never let one passing surface imply another.
 
-## Hotspot Map (for `/bugs`)
+## Review Hard Stops
 
-Proactive latent-bug sweeps use `.agents/skills/bugs/SKILL.md`. Pick one row and go deep; do not invent a whole-repo scope. The third column is **historical failure modes / regression risks**, not a claim that the tree is broken today. Prefer the matching Current Risk Areas invariant when judging a change.
+Beyond the rebuild, version-sync, surface, CLI-flag, WebKit, and popup-routing invariants in this file and `.claude/rules/rust.md`, a review blocks on:
+
+- npm release workflow changes that drop Trusted Publishing: `.github/workflows/npm-publish.yml`, `id-token: write`, canonical `git+https://github.com/tw93/Pake.git`, and `scripts/check-release-version.mjs` must survive.
+- A new helper in `bin/utils/` or `bin/helpers/` without a matching `tests/unit/<basename>.test.ts`.
+- A binary parser without a round-trip test.
+
+## Hotspot Map
+
+For proactive latent-bug sweeps, pick one row and go deep; do not invent a whole-repo scope. The third column is **historical failure modes / regression risks**, not a claim that the tree is broken today. Prefer the matching Current Risk Areas invariant when judging a change.
 
 | Hotspot                    | Paths                                  | Regression risk if reintroduced                                                            |
 | -------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------ |
@@ -87,6 +95,8 @@ Proactive latent-bug sweeps use `.agents/skills/bugs/SKILL.md`. Pick one row and
 | Multi-window / icon        | `window.rs`, `setup.rs`                | Missing `reapply_window_icon` on show; secondary window toast/target; Cmd+N blank flash    |
 | Platform capability        | `auth.rs`, proxy, WebKit flags         | Flag name present, platform no-op                                                          |
 | CLI / config contract      | `bin/`, `schema/`                      | Config smuggles out-of-range values CLI rejects                                            |
+
+Oracles per row live under `tests/unit/` (for example `event-link-guard.test.js`, `download-http-status.test.ts`, `menu-focused-window.test.ts`, `startup-window-reveal.test.ts`, `window-icon-reapply.test.ts`); Linux WebKit flag decisions are covered by the `dmabuf_renderer_*` and `legacy_x11_*` `cargo test` cases in `src-tauri/src/lib.rs`.
 
 ## Current Risk Areas
 
@@ -115,7 +125,7 @@ Proactive latent-bug sweeps use `.agents/skills/bugs/SKILL.md`. Pick one row and
 - Find's DOM-mark fallback must not observe its own highlighter mutations. Pause observation while rescanning/updating marks, then resume only while Find is open; real page edits must still refresh results. A mock without MutationObserver cannot prove this path. Icon download deadlines likewise cover response bodies, not just response headers.
 - Safe clipboard shortcuts (Ctrl+C/X/V/A) on Linux/Windows are bridged in `src-tauri/src/inject/event.js`. Copy/cut/select-all stay in the trusted `handleClipboardShortcut` keydown path; Ctrl+V must leave keydown unhandled so the native WebView paste event preserves images, files, and rich formats, with text-only `navigator.clipboard.readText()` fallback allowed only from a trusted keyup when no native paste event fired. The bridge is gated on `isNonMacDesktop()` and `event.isTrusted`, only acts on editable/selected targets, and must never fire on macOS (native shortcuts already work). Locked by `event-clipboard-shortcuts.test.js` tests `lets native paste preserve non-text clipboard data` and `falls back to clipboard text only when native paste does not fire`.
 - Notification flows cross injected JS, Tauri invokes, capabilities, and native notification plugins. Verify the Rust capability and JS caller together.
-- WebKit compositing behavior is platform-sensitive on Linux/Wayland. Runtime flag decisions live in `src-tauri/src/lib.rs`; keep the default conservative, cover compositor exceptions with unit tests, and document user-facing fallbacks in `docs/faq*.md`. WebKitGTK 2.52+ X11 uses SHM instead of disabling the renderer; use the loaded library version, preserve explicit variables, and keep older WebKit/Wayland on their existing path. Keep the niri exception in both legacy gates and test the combined mode, including safe-mode overrides.
+- WebKit compositing behavior is platform-sensitive on Linux/Wayland. Runtime flag decisions live in `src-tauri/src/lib.rs`; keep the default conservative, cover compositor exceptions with unit tests, and document user-facing fallbacks in `docs/faq*.md`. WebKitGTK 2.52+ uses SHM instead of disabling the renderer on both X11 and Wayland (#1374, #1386): either legacy flag turns hardware acceleration off and crashes video. Use the loaded library version, preserve explicit variables, and keep older WebKit on its existing path. Keep the niri exception in both legacy gates and test the combined mode, including safe-mode overrides.
 - Linux AppImage reports often include harmless GTK, appindicator, or GStreamer warnings. Separate optional runtime warnings from the actual symptom before changing code; input/click failures on pure Wayland compositors are not the same class as blank-window failures.
 - Stable `V*` Docker publication updates both the version tag and `latest`; verify matching registry manifest digests and the image's source revision. Quality validates the actual image CLI and both DEB/AppImage artifacts before a release tag is pushed. AppImage bundling requires `xdg-open` from `xdg-utils` in the image: a successful image build or DEB alone does not cover that dependency. Require both requested artifacts because the CLI intentionally allows partial success across formats.
 - Release state can be split. npm Trusted Publishing can succeed before the popular-app release workflow finishes, and GitHub Release assets can exist while a workflow run still shows queued or in progress. Report each surface explicitly.
@@ -127,7 +137,8 @@ Proactive latent-bug sweeps use `.agents/skills/bugs/SKILL.md`. Pick one row and
 - Injected Linux/Windows shortcuts (Ctrl+R / [ / ]) call the `webview_navigate` IPC so reload and history use the platform webview API on blank error pages; do not route those shortcuts only through page `history` / `location`.
 - Download and toast paths must not hardcode `get_webview_window("pake")` when the action originates from a secondary window: IPC commands take the calling `WebviewWindow`, and `on_download` resolves toast by the event webview's label. Authenticated downloads should attach webview session cookies when available. Link-download heuristics prefer real file extensions, the `download` attribute, and `?download` / `?attachment` query hints; Cmd/Ctrl+click is navigation, not "save as"; do not re-add broad SPA roots such as `/assets/`, `/dist/`, `/files/`, or `/releases/` (see #1337, #1339).
 - macOS menu navigation must keep working on blank error pages: Reload uses native `WebviewWindow::reload`, Go Home uses `navigate` + `resolve_home_url`, Back/Forward use the platform WKWebView history API rather than page `eval`. Copy URL reads `window.url()` so it does not depend on a live JS document.
-- Not every green CI step is evidence. `Test CLI Integration (smoke)` in `quality-and-test.yml` ends its command with `|| true`, so it reports success no matter how the CLI behaves; it is a log-producer, not a gate. The steps that actually fail on regressions are `Run Fast Test Suite` (all three platforms) and `Full Tauri Build` (real `pnpm test` with a build, push and dispatch only). Cite those when claiming a change is verified, and check for `|| true` and `continue-on-error` before treating any other step as proof.
+- Not every green CI step is evidence. `Test CLI Integration (smoke)` in `quality-and-test.yml` ends its command with `|| true`, so it reports success no matter how the CLI behaves; it is a log-producer, not a gate. The steps that actually fail on regressions are `Run Fast Test Suite` (all three platforms) and `Full Tauri Build` (real `pnpm test` with a build, push and dispatch only). Cite those when claiming a change is verified, and check for `|| true` and `continue-on-error` before treating any other step as proof. `Rust Code Quality` also runs `cargo test --lib`, the only CI gate for the Rust unit tests.
+- `setup-env` in build mode shares one rust-cache key per OS, and the first job to save wins it: every later restore is a full match and never saves again. A job that installs Rust but does not compile the app (fast lane, clippy) must pass `rust-cache-save: false`, or it seeds an empty target and every release recompiles from scratch. A healthy `v0-rust-pake-build-*` entry is about 1.1 GB and a poisoned one about 109 MB; check `gh cache list --key v0-rust-pake-build` before trusting release timings. Release builds reuse it because the CLI keeps `CARGO_TARGET_DIR` at `src-tauri/target` even inside its private workspace.
 - `.github/workflows/pake-cli.yaml` and `single-app.yaml` are public build surfaces that external users trigger from their own forks (see `docs/github-actions-usage*.md`). Changes there ship to outside users on push to `main`, independent of `V*` releases; treat them like public API, not internal CI.
 
 ## Platform-Specific Development

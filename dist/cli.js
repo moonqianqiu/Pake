@@ -19,7 +19,7 @@ import * as psl from 'psl';
 import { InvalidArgumentError, program as program$1, Option } from 'commander';
 
 var name = "pake-cli";
-var version = "3.17.1";
+var version = "3.17.2";
 var description = "🤱🏻 Turn any webpage into a desktop app with one command. 🤱🏻 一键打包网页生成轻量桌面应用。";
 var engines = {
 	node: ">=20.9.0"
@@ -1102,6 +1102,7 @@ Icon=${linuxBinaryName}
 Categories=Network;WebBrowser;Utility;
 MimeType=text/html;text/xml;application/xhtml_xml;
 StartupNotify=true
+StartupWMClass=${linuxBinaryName}
 Terminal=false
 `;
 }
