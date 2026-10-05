@@ -16,6 +16,7 @@ const fixture = path.join(root, "fixture");
 const downloads = path.join(root, "downloads");
 const identifier = `com.pake.ipc-probe-${process.pid}`;
 const reports = new Map();
+const downloadRequests = [];
 let app;
 let attackerOrigin;
 let entryOrigin;
@@ -31,9 +32,12 @@ function page(stage, origin) {
   };
   const results = {};
   results.download = await check("download_file", {params: {
-    url: ${JSON.stringify(origin + "/payload")}, filename: ${JSON.stringify(stage + ".txt")}
+    url: ${JSON.stringify(origin + "/payload")}, filename: ${JSON.stringify(stage + ".txt")},
+    user_agent: navigator.userAgent, page_url: location.href
   }});
+  results.userAgent = navigator.userAgent;
   results.zoom = await check("set_zoom", {percent: 100});
+  results.closeNotification = await check("close_notification", {id: "pake-probe-not-delivered"});
   results.window = await check("plugin:window|is_fullscreen", {label: "pake"});
   ${
     stage === "entry"
@@ -82,6 +86,7 @@ async function server(stage) {
       });
       response.end("pake-native-browser-download");
     } else if (request.url === "/payload") {
+      downloadRequests.push({ stage, headers: request.headers });
       response.writeHead(200, { "content-type": "text/plain" });
       response.end("pake-native-ipc-proof");
     } else if (request.url === "/report") {
@@ -90,7 +95,13 @@ async function server(stage) {
       reports.set(stage, JSON.parse(Buffer.concat(chunks).toString()));
       response.end("ok");
     } else {
-      response.writeHead(200, { "content-type": "text/html" });
+      response.writeHead(200, {
+        "content-type": "text/html",
+        "set-cookie": [
+          "pakeFixtureSession=entry; Path=/; HttpOnly; SameSite=Lax",
+          "pakeWrongPath=fixture; Path=/never; HttpOnly",
+        ],
+      });
       response.end(page(stage, origin));
     }
   });
@@ -178,10 +189,24 @@ try {
   assert.ok(reports.has("attacker"), "cross-origin page did not report");
   const trusted = reports.get("entry");
   const untrusted = reports.get("attacker");
-  for (const command of ["download", "zoom", "window", "traversal"]) {
+  const request = downloadRequests.find((item) => item.stage === "entry");
+  assert.equal(request.headers["user-agent"], trusted.userAgent);
+  assert.equal(request.headers.referer, entryOrigin + "/");
+  assert.match(
+    request.headers.cookie,
+    /(?:^|; )pakeFixtureSession=entry(?:;|$)/,
+  );
+  assert.ok(!request.headers.cookie.includes("pakeWrongPath"));
+  for (const command of [
+    "download",
+    "zoom",
+    "window",
+    "traversal",
+    "closeNotification",
+  ]) {
     assert.equal(trusted[command], "allowed", `configured origin: ${command}`);
   }
-  for (const command of ["download", "zoom", "window"]) {
+  for (const command of ["download", "zoom", "window", "closeNotification"]) {
     assert.match(
       untrusted[command],
       /^denied: .*not allowed/i,
@@ -224,7 +249,7 @@ try {
     await assert.rejects(fs.stat(file), { code: "ENOENT" });
   }
   console.log(
-    "Native IPC PASS: entry commands work, cross-origin commands are denied, browser downloads survive denied IPC, fullscreen denial preserves layout, traversal remains inside Downloads.",
+    "Native IPC PASS: download UA, Referer and HttpOnly cookies match the webview; entry commands work, cross-origin commands are denied, browser downloads survive denied IPC, fullscreen denial preserves layout, traversal remains inside Downloads.",
   );
 } finally {
   if (app && app.exitCode === null) {

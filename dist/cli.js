@@ -944,6 +944,7 @@ function buildWindowConfigOverrides(options, platform = asSupportedPlatform(proc
         disabled_web_shortcuts: options.disabledWebShortcuts,
         hide_on_close: platformHideOnClose,
         incognito: options.incognito,
+        password_autosave: options.passwordAutosave,
         title: options.title,
         enable_wasm: options.wasm,
         enable_drag_drop: options.enableDragDrop,
@@ -2117,10 +2118,12 @@ class MacBuilder extends BaseBuilder {
     }
 }
 
+const WEBVIEW2_LOADER_DLL = 'WebView2Loader.dll';
 class WinBuilder extends BaseBuilder {
     constructor(options) {
         super(options);
         this.buildFormat = 'msi';
+        this.keptLoaderDllPath = null;
         const validArchs = ['x64', 'arm64', 'auto'];
         this.buildArch = validArchs.includes(options.targets || '')
             ? this.resolveTargetArch(options.targets)
@@ -2174,6 +2177,32 @@ class WinBuilder extends BaseBuilder {
     }
     getBinaryName(appName) {
         return `pake-${generateIdentifierSafeName(appName)}.exe`;
+    }
+    async copyRawBinary(npmDirectory, appName) {
+        await super.copyRawBinary(npmDirectory, appName);
+        if (this.toolchain !== 'gnu')
+            return;
+        // GNU builds import WebView2Loader.dll at runtime (MSVC links
+        // WebView2LoaderStatic); tauri-build places it beside the binary and the
+        // MSI bundles it, so the kept .exe needs it beside it too.
+        const src = path.join(path.dirname(this.getRawBinarySourcePath(npmDirectory, appName)), WEBVIEW2_LOADER_DLL);
+        const dest = path.join(path.dirname(path.resolve(this.getRawBinaryPath(appName))), WEBVIEW2_LOADER_DLL);
+        if (await fsExtra.pathExists(src)) {
+            await fsExtra.copy(src, dest);
+            this.keptLoaderDllPath = dest;
+        }
+        else {
+            logger.warn(`✼ ${WEBVIEW2_LOADER_DLL} not found at ${src}; the raw binary will not start without it.`);
+        }
+    }
+    async copyBuildArtifacts(target, logSuccess = true) {
+        await super.copyBuildArtifacts(target, logSuccess);
+        if (!this.keptLoaderDllPath)
+            return;
+        await this.recordArtifact(this.keptLoaderDllPath, 'dll');
+        if (logSuccess) {
+            logger.success(`✔ ${WEBVIEW2_LOADER_DLL} copied beside it — keep them together`);
+        }
     }
 }
 // MSYS2/MinGW only ships an x86_64 GCC toolchain, so gnu is x64-only;
@@ -3508,6 +3537,7 @@ const DEFAULT_PAKE_OPTIONS = {
     installerLanguage: 'en-US',
     hideOnClose: undefined, // Platform-specific: true for macOS, false for others
     incognito: false,
+    passwordAutosave: false,
     wasm: false,
     enableDragDrop: false,
     bundle: true,
@@ -3677,6 +3707,9 @@ ${green('|_|   \\__,_|_|\\_\\___|  can turn any webpage into a desktop app with 
         .addOption(new Option('--title <string>', 'Window title').hideHelp())
         .addOption(new Option('--incognito', 'Launch app in incognito/private mode')
         .default(DEFAULT_PAKE_OPTIONS.incognito)
+        .hideHelp())
+        .addOption(new Option('--password-autosave', 'Enable native password-save prompts on Windows')
+        .default(DEFAULT_PAKE_OPTIONS.passwordAutosave)
         .hideHelp())
         .addOption(new Option('--wasm', 'Enable WebAssembly support (Flutter Web, etc.)')
         .default(DEFAULT_PAKE_OPTIONS.wasm)

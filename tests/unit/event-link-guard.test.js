@@ -74,7 +74,8 @@ function loadEventHelpers({
   const context = {
     console,
     URL,
-    Event: class {},
+    Event,
+    EventTarget,
     Notification: function Notification() {},
     setTimeout,
     clearTimeout,
@@ -446,6 +447,8 @@ describe("event link guard", () => {
           url: "https://github.com/owner/repo/releases/download/v1.28.3/app.dmg",
           filename: "app.dmg",
           language: "en-US",
+          page_url: "https://github.com/owner/repo/releases",
+          user_agent: "Mozilla/5.0",
         },
       },
     ]);
@@ -548,6 +551,8 @@ describe("event link guard", () => {
           url: "https://example.com/app/settings",
           filename: "settings.html",
           language: "en-US",
+          page_url: "https://example.com/app",
+          user_agent: "Mozilla/5.0",
         },
       },
     ]);
@@ -836,6 +841,8 @@ describe("event link guard", () => {
         "send_notification",
         {
           params: {
+            // Correlates the native click callback back to this instance.
+            id: expect.stringMatching(/^[A-Za-z0-9_-]{1,64}$/),
             title: "Hello",
             body: "World",
             icon: "https://example.com/icon.png",
