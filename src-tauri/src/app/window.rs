@@ -2,8 +2,8 @@ use crate::app::config::PakeConfig;
 #[cfg(target_os = "windows")]
 use crate::app::navigation::set_password_autosave;
 use crate::util::{
-    check_file_or_append, get_data_dir, get_download_dir, get_download_message_with_lang,
-    sanitize_download_filename, show_toast, MessageType,
+    check_file_or_append, data_dir_name, get_data_dir, get_download_dir,
+    get_download_message_with_lang, sanitize_download_filename, show_toast, MessageType,
 };
 #[cfg(target_os = "macos")]
 use dispatch::Queue;
@@ -421,11 +421,8 @@ fn build_window(
     #[cfg(target_os = "macos")]
     let prefer_native_window_tabbing = use_native_window_tabbing && label != "pake";
 
-    let package_name = tauri_config
-        .product_name
-        .clone()
-        .unwrap_or_else(|| "pake".to_string());
-    let _data_dir = get_data_dir(app, package_name).map_err(tauri::Error::Io)?;
+    let _data_dir =
+        get_data_dir(app, data_dir_name(config, tauri_config)).map_err(tauri::Error::Io)?;
 
     let window_config = config.windows.first().ok_or_else(|| {
         tauri::Error::Io(std::io::Error::new(
@@ -611,7 +608,12 @@ fn build_window(
         .initialization_script(include_str!("../inject/event.js"))
         .initialization_script(include_str!("../inject/style.js"))
         .initialization_script(include_str!("../inject/theme_refresh.js"))
-        .initialization_script(include_str!("../inject/custom.js"));
+        .initialization_script(
+            config
+                .runtime_custom_js
+                .as_deref()
+                .unwrap_or(include_str!("../inject/custom.js")),
+        );
 
     #[cfg(target_os = "windows")]
     let mut windows_browser_args = String::from("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-blink-features=AutomationControlled");
@@ -828,6 +830,15 @@ fn build_window(
         }) {
             eprintln!("[Pake] Failed to access WebView2 for password autosave: {error}");
         }
+    }
+
+    // Every webview is built here (main window, Cmd+N clones, --new-window and
+    // blank two-stage popups), so trackpad history swipes match in all of them.
+    #[cfg(target_os = "macos")]
+    if let Err(error) = window.with_webview(|webview| {
+        crate::app::navigation::enable_back_forward_gestures(&webview);
+    }) {
+        eprintln!("[Pake] Failed to access WKWebView for history swipe gestures: {error}");
     }
 
     // The tab bar's + button exists only while some window class answers

@@ -4,7 +4,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Config, Manager, WebviewWindow};
 
-pub fn get_pake_config() -> (PakeConfig, Config) {
+pub fn get_pake_config() -> (PakeConfig, Config, Option<RuntimeApp>) {
     #[cfg(feature = "cli-build")]
     let pake_config: PakeConfig = serde_json::from_str(include_str!("../.pake/pake.json"))
         .expect("Failed to parse pake config");
@@ -21,7 +21,154 @@ pub fn get_pake_config() -> (PakeConfig, Config) {
     let tauri_config: Config = serde_json::from_str(include_str!("../tauri.conf.json"))
         .expect("Failed to parse tauri config");
 
-    (pake_config, tauri_config)
+    // Only the prebuilt template reads a runtime override; CLI-built apps keep
+    // their compiled configuration even if a pake-runtime folder appears.
+    #[cfg(feature = "runtime-template")]
+    let runtime_dir = env::current_exe()
+        .ok()
+        .and_then(|exe| runtime_dir_for_exe(&exe));
+    #[cfg(not(feature = "runtime-template"))]
+    let runtime_dir: Option<PathBuf> = None;
+    match apply_runtime_override(pake_config, tauri_config, runtime_dir.as_deref()) {
+        Ok(configs) => configs,
+        Err(error) => {
+            eprintln!("[Pake] Invalid runtime configuration: {error}");
+            std::process::exit(1);
+        }
+    }
+}
+
+const RUNTIME_DIR: &str = "pake-runtime";
+
+/// App identity supplied next to a runtime `pake.json`.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeApp {
+    pub identifier: String,
+    pub product_name: String,
+}
+
+/// macOS keeps overrides in `Contents/Resources/pake-runtime`; other platforms
+/// use `pake-runtime` next to the executable.
+#[cfg_attr(not(feature = "runtime-template"), allow(dead_code))]
+fn runtime_dir_for_exe(exe: &Path) -> Option<PathBuf> {
+    let exe_dir = exe.parent()?;
+    #[cfg(target_os = "macos")]
+    let base = exe_dir.parent()?.join("Resources");
+    #[cfg(not(target_os = "macos"))]
+    let base = exe_dir.to_path_buf();
+    Some(base.join(RUNTIME_DIR))
+}
+
+fn read_optional(path: &Path) -> Result<Option<String>, String> {
+    match std::fs::read_to_string(path) {
+        Ok(contents) => Ok(Some(contents)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("cannot read {}: {error}", path.display())),
+    }
+}
+
+/// Without `pake-runtime/pake.json` the compiled configuration is returned
+/// unchanged. When it exists, `app.json` is required and both must parse.
+fn apply_runtime_override(
+    mut pake_config: PakeConfig,
+    mut tauri_config: Config,
+    runtime_dir: Option<&Path>,
+) -> Result<(PakeConfig, Config, Option<RuntimeApp>), String> {
+    let Some(dir) = runtime_dir else {
+        return Ok((pake_config, tauri_config, None));
+    };
+    let pake_path = dir.join("pake.json");
+    let Some(pake_json) = read_optional(&pake_path)? else {
+        return Ok((pake_config, tauri_config, None));
+    };
+    let app_path = dir.join("app.json");
+    let app_json =
+        read_optional(&app_path)?.ok_or_else(|| format!("{} is missing", app_path.display()))?;
+
+    pake_config = serde_json::from_str(&pake_json)
+        .map_err(|error| format!("cannot parse {}: {error}", pake_path.display()))?;
+    if pake_config.windows.is_empty() {
+        return Err(format!("{} defines no windows", pake_path.display()));
+    }
+    let app: RuntimeApp = serde_json::from_str(&app_json)
+        .map_err(|error| format!("cannot parse {}: {error}", app_path.display()))?;
+    if app.identifier.trim().is_empty() || app.product_name.trim().is_empty() {
+        return Err(format!(
+            "{} needs a non-empty identifier and productName",
+            app_path.display()
+        ));
+    }
+    // The identifier names per-app folders and the Windows AppUserModelID.
+    if !is_valid_identifier(&app.identifier) {
+        return Err(format!(
+            "{} has an invalid identifier {:?}",
+            app_path.display(),
+            app.identifier
+        ));
+    }
+
+    pake_config.runtime_custom_js = read_optional(&dir.join("custom.js"))?;
+    if !pake_config.system_tray_path.is_empty()
+        && Path::new(&pake_config.system_tray_path).is_relative()
+    {
+        pake_config.system_tray_path = dir
+            .join(&pake_config.system_tray_path)
+            .to_string_lossy()
+            .into_owned();
+    }
+    pake_config.runtime_app = true;
+    tauri_config.identifier = app.identifier.clone();
+    tauri_config.product_name = Some(app.product_name.clone());
+    Ok((pake_config, tauri_config, Some(app)))
+}
+
+/// Same rule as the CLI's --identifier check, capped at the 128 characters an
+/// AppUserModelID allows.
+fn is_valid_identifier(id: &str) -> bool {
+    let bytes = id.as_bytes();
+    id.len() <= 128
+        && bytes.first().is_some_and(u8::is_ascii_alphabetic)
+        && bytes.last().is_some_and(u8::is_ascii_alphanumeric)
+        && bytes
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || *b == b'.' || *b == b'-')
+}
+
+/// Folder under the config dir that holds the WebView profile (WebView2's
+/// EBWebView on Windows). CLI apps keep their product-name folder; a runtime
+/// app uses its identifier so a rename keeps its logins and a generated name
+/// cannot land in another program's folder.
+pub fn data_dir_name(pake_config: &PakeConfig, tauri_config: &Config) -> String {
+    if pake_config.runtime_app {
+        tauri_config.identifier.clone()
+    } else {
+        tauri_config
+            .product_name
+            .clone()
+            .unwrap_or_else(|| "pake".to_string())
+    }
+}
+
+/// The Windows AppUserModelID a runtime app sets before creating windows, so
+/// a shortcut carrying the identifier groups with the running window and
+/// toasts (sent under the identifier) are attributed to it. CLI apps keep the
+/// shell's default.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn app_user_model_id(runtime_app: Option<&RuntimeApp>) -> Option<&str> {
+    runtime_app.map(|app| app.identifier.as_str())
+}
+
+/// Must run before any window exists; the shell reads the ID at window creation.
+#[cfg(windows)]
+pub fn set_app_user_model_id(id: &str) {
+    use windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
+    let wide: Vec<u16> = id.encode_utf16().chain(std::iter::once(0)).collect();
+    // SAFETY: `wide` is a NUL-terminated UTF-16 buffer that outlives the call.
+    let result = unsafe { SetCurrentProcessExplicitAppUserModelID(wide.as_ptr()) };
+    if result < 0 {
+        eprintln!("[Pake] Could not set the AppUserModelID {id}: HRESULT {result:#010x}");
+    }
 }
 
 pub fn get_data_dir(app: &AppHandle, package_name: String) -> std::io::Result<PathBuf> {
@@ -469,5 +616,216 @@ mod tests {
         let zh = get_download_message_with_lang(MessageType::Failure, Some("zh".into()));
         assert!(en.contains("Download failed"));
         assert!(zh.contains("下载失败"));
+    }
+
+    fn compiled_configs() -> (PakeConfig, Config) {
+        (
+            serde_json::from_str(include_str!("../pake.json")).unwrap(),
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap(),
+        )
+    }
+
+    fn snapshot(pake: &PakeConfig, tauri: &Config) -> (serde_json::Value, serde_json::Value) {
+        (
+            serde_json::to_value(pake).unwrap(),
+            serde_json::to_value(tauri).unwrap(),
+        )
+    }
+
+    fn runtime_dir(files: &[(&str, &str)]) -> PathBuf {
+        let dir = temp_path(RUNTIME_DIR);
+        fs::create_dir_all(&dir).unwrap();
+        for (name, contents) in files {
+            fs::write(dir.join(name), contents).unwrap();
+        }
+        dir
+    }
+
+    const RUNTIME_APP: &str = r#"{"identifier":"com.pake.a1b2c3","productName":"Runtime Probe"}"#;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn runtime_dir_lives_in_bundle_resources_on_macos() {
+        assert_eq!(
+            runtime_dir_for_exe(Path::new("/Applications/Probe.app/Contents/MacOS/pake")),
+            Some(PathBuf::from(
+                "/Applications/Probe.app/Contents/Resources/pake-runtime"
+            ))
+        );
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn runtime_dir_lives_next_to_executable() {
+        let exe = temp_path("pake");
+        assert_eq!(
+            runtime_dir_for_exe(&exe),
+            Some(exe.parent().unwrap().join("pake-runtime"))
+        );
+    }
+
+    #[test]
+    fn absent_runtime_override_keeps_compiled_configs() {
+        let (pake, tauri) = compiled_configs();
+        let expected = snapshot(&pake, &tauri);
+
+        let (pake, tauri, app) = apply_runtime_override(pake, tauri, None).unwrap();
+        assert!(app.is_none());
+        assert_eq!(snapshot(&pake, &tauri), expected);
+
+        // A directory without pake.json is not a runtime app, even with app.json.
+        let dir = runtime_dir(&[("app.json", RUNTIME_APP), ("custom.js", "x")]);
+        let (pake, tauri, app) = apply_runtime_override(pake, tauri, Some(&dir)).unwrap();
+        assert!(app.is_none());
+        assert!(pake.runtime_custom_js.is_none());
+        assert_eq!(snapshot(&pake, &tauri), expected);
+
+        let missing = dir.join("missing");
+        let (pake, tauri, app) = apply_runtime_override(pake, tauri, Some(&missing)).unwrap();
+        assert!(app.is_none());
+        assert_eq!(snapshot(&pake, &tauri), expected);
+        fs::remove_dir_all(dir.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn runtime_override_replaces_config_identity_script_and_tray() {
+        let mut runtime: serde_json::Value =
+            serde_json::from_str(include_str!("../pake.json")).unwrap();
+        runtime["windows"][0]["url"] = "https://example.com/app".into();
+        runtime["system_tray_path"] = "tray.png".into();
+        // Optional fields fall back to their serde defaults.
+        for key in ["password_autosave", "new_window", "enable_find"] {
+            runtime["windows"][0].as_object_mut().unwrap().remove(key);
+        }
+        runtime.as_object_mut().unwrap().remove("download_dir");
+        let dir = runtime_dir(&[
+            ("pake.json", &runtime.to_string()),
+            ("app.json", RUNTIME_APP),
+            ("custom.js", "document.documentElement.dataset.probe = '1';"),
+        ]);
+
+        let (pake, tauri) = compiled_configs();
+        let (pake, tauri, app) = apply_runtime_override(pake, tauri, Some(&dir)).unwrap();
+        assert_eq!(
+            app,
+            Some(RuntimeApp {
+                identifier: "com.pake.a1b2c3".into(),
+                product_name: "Runtime Probe".into(),
+            })
+        );
+        assert_eq!(tauri.identifier, "com.pake.a1b2c3");
+        assert_eq!(tauri.product_name.as_deref(), Some("Runtime Probe"));
+        assert_eq!(pake.windows[0].url, "https://example.com/app");
+        assert_eq!(pake.windows[0].zoom, 100);
+        assert!(!pake.windows[0].enable_find);
+        assert!(pake.download_dir.is_empty());
+        assert_eq!(
+            pake.runtime_custom_js.as_deref(),
+            Some("document.documentElement.dataset.probe = '1';")
+        );
+        assert_eq!(PathBuf::from(&pake.system_tray_path), dir.join("tray.png"));
+
+        // Absolute tray paths and a missing custom.js stay as written.
+        let absolute = dir.join("elsewhere.png");
+        runtime["system_tray_path"] = absolute.to_string_lossy().into_owned().into();
+        fs::write(dir.join("pake.json"), runtime.to_string()).unwrap();
+        fs::remove_file(dir.join("custom.js")).unwrap();
+        let (pake, tauri) = compiled_configs();
+        let (pake, _, _) = apply_runtime_override(pake, tauri, Some(&dir)).unwrap();
+        assert_eq!(PathBuf::from(&pake.system_tray_path), absolute);
+        assert!(pake.runtime_custom_js.is_none());
+        fs::remove_dir_all(dir.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn invalid_runtime_override_is_an_error() {
+        let pake_json = include_str!("../pake.json");
+        for files in [
+            vec![("pake.json", pake_json)],
+            vec![("pake.json", "{"), ("app.json", RUNTIME_APP)],
+            vec![
+                ("pake.json", r#"{"windows":[]}"#),
+                ("app.json", RUNTIME_APP),
+            ],
+            vec![
+                ("pake.json", pake_json),
+                ("app.json", r#"{"identifier":"x"}"#),
+            ],
+            vec![
+                ("pake.json", pake_json),
+                ("app.json", r#"{"identifier":" ","productName":"Probe"}"#),
+            ],
+            vec![
+                ("pake.json", pake_json),
+                (
+                    "app.json",
+                    r#"{"identifier":"com.pake/../x","productName":"Probe"}"#,
+                ),
+            ],
+            vec![
+                ("pake.json", pake_json),
+                (
+                    "app.json",
+                    r#"{"identifier":"com pake","productName":"Probe"}"#,
+                ),
+            ],
+        ] {
+            let dir = runtime_dir(&files);
+            let (pake, tauri) = compiled_configs();
+            assert!(
+                apply_runtime_override(pake, tauri, Some(&dir)).is_err(),
+                "expected an error for {files:?}"
+            );
+            fs::remove_dir_all(dir.parent().unwrap()).unwrap();
+        }
+    }
+
+    #[test]
+    fn data_dir_follows_product_name_for_cli_and_identifier_for_runtime() {
+        let (pake, tauri) = compiled_configs();
+        let cli_name = tauri.product_name.clone().unwrap();
+        let (pake, tauri, _) = apply_runtime_override(pake, tauri, None).unwrap();
+        assert_eq!(data_dir_name(&pake, &tauri), cli_name);
+
+        let mut nameless = tauri.clone();
+        nameless.product_name = None;
+        assert_eq!(data_dir_name(&pake, &nameless), "pake");
+
+        let dir = runtime_dir(&[
+            ("pake.json", include_str!("../pake.json")),
+            ("app.json", RUNTIME_APP),
+        ]);
+        let (pake, tauri, _) = apply_runtime_override(pake, tauri, Some(&dir)).unwrap();
+        assert_eq!(data_dir_name(&pake, &tauri), "com.pake.a1b2c3");
+        fs::remove_dir_all(dir.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn identifiers_follow_the_cli_rule() {
+        for id in ["com.pake.a1b2c3", "com.example.app-2", "a1"] {
+            assert!(is_valid_identifier(id), "{id}");
+        }
+        let too_long = format!("a{}", "b".repeat(128));
+        for id in [
+            "",
+            "1abc",
+            "com.pake.",
+            "com pake",
+            "com/pake",
+            "..x",
+            too_long.as_str(),
+        ] {
+            assert!(!is_valid_identifier(id), "{id}");
+        }
+    }
+
+    #[test]
+    fn app_user_model_id_is_set_only_for_runtime_apps() {
+        assert_eq!(app_user_model_id(None), None);
+        let app = RuntimeApp {
+            identifier: "com.pake.a1b2c3".into(),
+            product_name: "Runtime Probe".into(),
+        };
+        assert_eq!(app_user_model_id(Some(&app)), Some("com.pake.a1b2c3"));
     }
 }

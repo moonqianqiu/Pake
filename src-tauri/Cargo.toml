@@ -1,6 +1,6 @@
 [package]
 name = "pake"
-version = "3.17.2"
+version = "3.17.3"
 description = "🤱🏻 Turn any webpage into a desktop app with Rust."
 authors = ["Tw93"]
 license = "GPL-3.0-or-later"
@@ -40,7 +40,11 @@ block2 = "0.6"
 dispatch = "0.2"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSDockTile", "NSWindow"] }
-objc2-foundation = { version = "0.3", features = ["NSString"] }
+objc2-foundation = { version = "0.3", features = [
+  "NSArray",
+  "NSString",
+  "NSUserNotification",
+] }
 objc2-web-kit = { version = "0.3", default-features = false, features = [
   "std",
   "WKUserContentController",
@@ -52,6 +56,9 @@ objc2-web-kit = { version = "0.3", default-features = false, features = [
 # Version and features must match what wry resolves, or PlatformWebview::inner
 # hands back a WebView from a different crate instance.
 webkit2gtk = { version = "=2.0.2", features = ["v2_38"] }
+# Reads the freedesktop color-scheme from the settings portal. Same version
+# and features that tauri-plugin-opener and single-instance already lock.
+zbus = "5.14"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = [
@@ -67,6 +74,9 @@ windows-core = "0.61.2"
 [features]
 # this feature is used for development builds from development cli
 cli-build = []
+# Prebuilt template that reads a pake-runtime folder at launch: Contents/Resources
+# on macOS, next to the executable elsewhere. The CLI never enables it.
+runtime-template = []
 # Tauri's macOS proxy APIs require macOS 14 or later. The CLI enables this
 # feature only after checking the host Darwin version.
 macos-proxy = ["tauri/macos-proxy"]
