@@ -4,7 +4,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Config, Manager, WebviewWindow};
 
-pub fn get_pake_config() -> (PakeConfig, Config, Option<RuntimeApp>) {
+pub fn get_pake_config() -> (PakeConfig, Config) {
     #[cfg(feature = "cli-build")]
     let pake_config: PakeConfig = serde_json::from_str(include_str!("../.pake/pake.json"))
         .expect("Failed to parse pake config");
@@ -41,11 +41,11 @@ pub fn get_pake_config() -> (PakeConfig, Config, Option<RuntimeApp>) {
 const RUNTIME_DIR: &str = "pake-runtime";
 
 /// App identity supplied next to a runtime `pake.json`.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+#[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RuntimeApp {
-    pub identifier: String,
-    pub product_name: String,
+struct RuntimeApp {
+    identifier: String,
+    product_name: String,
 }
 
 /// macOS keeps overrides in `Contents/Resources/pake-runtime`; other platforms
@@ -74,13 +74,13 @@ fn apply_runtime_override(
     mut pake_config: PakeConfig,
     mut tauri_config: Config,
     runtime_dir: Option<&Path>,
-) -> Result<(PakeConfig, Config, Option<RuntimeApp>), String> {
+) -> Result<(PakeConfig, Config), String> {
     let Some(dir) = runtime_dir else {
-        return Ok((pake_config, tauri_config, None));
+        return Ok((pake_config, tauri_config));
     };
     let pake_path = dir.join("pake.json");
     let Some(pake_json) = read_optional(&pake_path)? else {
-        return Ok((pake_config, tauri_config, None));
+        return Ok((pake_config, tauri_config));
     };
     let app_path = dir.join("app.json");
     let app_json =
@@ -118,9 +118,9 @@ fn apply_runtime_override(
             .into_owned();
     }
     pake_config.runtime_app = true;
-    tauri_config.identifier = app.identifier.clone();
-    tauri_config.product_name = Some(app.product_name.clone());
-    Ok((pake_config, tauri_config, Some(app)))
+    tauri_config.identifier = app.identifier;
+    tauri_config.product_name = Some(app.product_name);
+    Ok((pake_config, tauri_config))
 }
 
 /// Same rule as the CLI's --identifier check, capped at the 128 characters an
@@ -148,15 +148,6 @@ pub fn data_dir_name(pake_config: &PakeConfig, tauri_config: &Config) -> String 
             .clone()
             .unwrap_or_else(|| "pake".to_string())
     }
-}
-
-/// The Windows AppUserModelID a runtime app sets before creating windows, so
-/// a shortcut carrying the identifier groups with the running window and
-/// toasts (sent under the identifier) are attributed to it. CLI apps keep the
-/// shell's default.
-#[cfg_attr(not(windows), allow(dead_code))]
-pub fn app_user_model_id(runtime_app: Option<&RuntimeApp>) -> Option<&str> {
-    runtime_app.map(|app| app.identifier.as_str())
 }
 
 /// Must run before any window exists; the shell reads the ID at window creation.
@@ -329,6 +320,72 @@ pub fn get_download_message_with_lang(
         }
     }
     .to_string()
+}
+
+/// Language of the user's system interface, for native strings such as the
+/// tray menu that the page's `navigator.language` cannot reach.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UiLanguage {
+    English,
+    SimplifiedChinese,
+    TraditionalChinese,
+}
+
+impl UiLanguage {
+    /// Classifies a BCP 47 tag (`zh-Hant-TW`) or a POSIX locale (`zh_TW.UTF-8`).
+    #[cfg_attr(windows, allow(dead_code))]
+    pub fn from_tag(tag: &str) -> Self {
+        let tag = tag.to_ascii_lowercase();
+        let mut parts = tag.split(['-', '_', '.', '@']);
+        if parts.next() != Some("zh") {
+            return UiLanguage::English;
+        }
+        if parts.any(|part| matches!(part, "hant" | "tw" | "hk" | "mo")) {
+            UiLanguage::TraditionalChinese
+        } else {
+            UiLanguage::SimplifiedChinese
+        }
+    }
+
+    /// Classifies a Windows LANGID from `GetUserDefaultUILanguage`.
+    #[cfg(any(windows, test))]
+    fn from_windows_langid(langid: u16) -> Self {
+        const LANG_CHINESE: u16 = 0x04;
+        if langid & 0x3ff != LANG_CHINESE {
+            return UiLanguage::English;
+        }
+        // Sublanguages 1, 3 and 5 are Taiwan, Hong Kong and Macao.
+        match langid >> 10 {
+            0x01 | 0x03 | 0x05 => UiLanguage::TraditionalChinese,
+            _ => UiLanguage::SimplifiedChinese,
+        }
+    }
+
+    /// Apps launched from Finder or Explorer carry no `LANG`, so macOS and
+    /// Windows ask the system for the preferred interface language.
+    pub fn system() -> Self {
+        #[cfg(target_os = "macos")]
+        {
+            objc2_foundation::NSLocale::preferredLanguages()
+                .firstObject()
+                .map(|tag| UiLanguage::from_tag(&tag.to_string()))
+                .unwrap_or(UiLanguage::English)
+        }
+        #[cfg(windows)]
+        {
+            use windows_sys::Win32::Globalization::GetUserDefaultUILanguage;
+            UiLanguage::from_windows_langid(unsafe { GetUserDefaultUILanguage() })
+        }
+        #[cfg(not(any(target_os = "macos", windows)))]
+        {
+            ["LC_ALL", "LC_MESSAGES", "LANG"]
+                .iter()
+                .filter_map(|var| env::var(var).ok())
+                .find(|value| !value.is_empty())
+                .map(|value| UiLanguage::from_tag(&value))
+                .unwrap_or(UiLanguage::English)
+        }
+    }
 }
 
 pub fn sanitize_download_filename(filename: &str) -> String {
@@ -611,6 +668,53 @@ mod tests {
     }
 
     #[test]
+    fn ui_language_reads_bcp47_and_posix_tags() {
+        for tag in ["en", "en-US", "fr_FR.UTF-8", "zhx", ""] {
+            assert_eq!(UiLanguage::from_tag(tag), UiLanguage::English, "{tag}");
+        }
+        for tag in ["zh", "zh-Hans", "zh-Hans-CN", "zh_CN.UTF-8", "zh-SG"] {
+            assert_eq!(
+                UiLanguage::from_tag(tag),
+                UiLanguage::SimplifiedChinese,
+                "{tag}"
+            );
+        }
+        for tag in [
+            "zh-Hant",
+            "zh-Hant-HK",
+            "zh-TW",
+            "zh_TW.UTF-8",
+            "zh_HK",
+            "zh-MO",
+        ] {
+            assert_eq!(
+                UiLanguage::from_tag(tag),
+                UiLanguage::TraditionalChinese,
+                "{tag}"
+            );
+        }
+    }
+
+    #[test]
+    fn ui_language_reads_windows_langids() {
+        assert_eq!(UiLanguage::from_windows_langid(0x0409), UiLanguage::English);
+        assert_eq!(
+            UiLanguage::from_windows_langid(0x0804),
+            UiLanguage::SimplifiedChinese
+        );
+        assert_eq!(
+            UiLanguage::from_windows_langid(0x1004),
+            UiLanguage::SimplifiedChinese
+        );
+        for traditional in [0x0404, 0x0C04, 0x1404] {
+            assert_eq!(
+                UiLanguage::from_windows_langid(traditional),
+                UiLanguage::TraditionalChinese
+            );
+        }
+    }
+
+    #[test]
     fn download_message_failure_localized() {
         let en = get_download_message_with_lang(MessageType::Failure, Some("en".into()));
         let zh = get_download_message_with_lang(MessageType::Failure, Some("zh".into()));
@@ -669,20 +773,20 @@ mod tests {
         let (pake, tauri) = compiled_configs();
         let expected = snapshot(&pake, &tauri);
 
-        let (pake, tauri, app) = apply_runtime_override(pake, tauri, None).unwrap();
-        assert!(app.is_none());
+        let (pake, tauri) = apply_runtime_override(pake, tauri, None).unwrap();
+        assert!(!pake.runtime_app);
         assert_eq!(snapshot(&pake, &tauri), expected);
 
         // A directory without pake.json is not a runtime app, even with app.json.
         let dir = runtime_dir(&[("app.json", RUNTIME_APP), ("custom.js", "x")]);
-        let (pake, tauri, app) = apply_runtime_override(pake, tauri, Some(&dir)).unwrap();
-        assert!(app.is_none());
+        let (pake, tauri) = apply_runtime_override(pake, tauri, Some(&dir)).unwrap();
+        assert!(!pake.runtime_app);
         assert!(pake.runtime_custom_js.is_none());
         assert_eq!(snapshot(&pake, &tauri), expected);
 
         let missing = dir.join("missing");
-        let (pake, tauri, app) = apply_runtime_override(pake, tauri, Some(&missing)).unwrap();
-        assert!(app.is_none());
+        let (pake, tauri) = apply_runtime_override(pake, tauri, Some(&missing)).unwrap();
+        assert!(!pake.runtime_app);
         assert_eq!(snapshot(&pake, &tauri), expected);
         fs::remove_dir_all(dir.parent().unwrap()).unwrap();
     }
@@ -705,14 +809,8 @@ mod tests {
         ]);
 
         let (pake, tauri) = compiled_configs();
-        let (pake, tauri, app) = apply_runtime_override(pake, tauri, Some(&dir)).unwrap();
-        assert_eq!(
-            app,
-            Some(RuntimeApp {
-                identifier: "com.pake.a1b2c3".into(),
-                product_name: "Runtime Probe".into(),
-            })
-        );
+        let (pake, tauri) = apply_runtime_override(pake, tauri, Some(&dir)).unwrap();
+        assert!(pake.runtime_app);
         assert_eq!(tauri.identifier, "com.pake.a1b2c3");
         assert_eq!(tauri.product_name.as_deref(), Some("Runtime Probe"));
         assert_eq!(pake.windows[0].url, "https://example.com/app");
@@ -731,7 +829,7 @@ mod tests {
         fs::write(dir.join("pake.json"), runtime.to_string()).unwrap();
         fs::remove_file(dir.join("custom.js")).unwrap();
         let (pake, tauri) = compiled_configs();
-        let (pake, _, _) = apply_runtime_override(pake, tauri, Some(&dir)).unwrap();
+        let (pake, _) = apply_runtime_override(pake, tauri, Some(&dir)).unwrap();
         assert_eq!(PathBuf::from(&pake.system_tray_path), absolute);
         assert!(pake.runtime_custom_js.is_none());
         fs::remove_dir_all(dir.parent().unwrap()).unwrap();
@@ -784,7 +882,7 @@ mod tests {
     fn data_dir_follows_product_name_for_cli_and_identifier_for_runtime() {
         let (pake, tauri) = compiled_configs();
         let cli_name = tauri.product_name.clone().unwrap();
-        let (pake, tauri, _) = apply_runtime_override(pake, tauri, None).unwrap();
+        let (pake, tauri) = apply_runtime_override(pake, tauri, None).unwrap();
         assert_eq!(data_dir_name(&pake, &tauri), cli_name);
 
         let mut nameless = tauri.clone();
@@ -795,7 +893,7 @@ mod tests {
             ("pake.json", include_str!("../pake.json")),
             ("app.json", RUNTIME_APP),
         ]);
-        let (pake, tauri, _) = apply_runtime_override(pake, tauri, Some(&dir)).unwrap();
+        let (pake, tauri) = apply_runtime_override(pake, tauri, Some(&dir)).unwrap();
         assert_eq!(data_dir_name(&pake, &tauri), "com.pake.a1b2c3");
         fs::remove_dir_all(dir.parent().unwrap()).unwrap();
     }
@@ -817,15 +915,5 @@ mod tests {
         ] {
             assert!(!is_valid_identifier(id), "{id}");
         }
-    }
-
-    #[test]
-    fn app_user_model_id_is_set_only_for_runtime_apps() {
-        assert_eq!(app_user_model_id(None), None);
-        let app = RuntimeApp {
-            identifier: "com.pake.a1b2c3".into(),
-            product_name: "Runtime Probe".into(),
-        };
-        assert_eq!(app_user_model_id(Some(&app)), Some("com.pake.a1b2c3"));
     }
 }

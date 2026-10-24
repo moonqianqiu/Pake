@@ -54,6 +54,7 @@ export function buildWindowConfigOverrides(
     disabled_web_shortcuts: options.disabledWebShortcuts,
     hide_on_close: platformHideOnClose,
     incognito: options.incognito,
+    restore_last_url: options.restoreLastUrl,
     password_autosave: options.passwordAutosave,
     title: options.title,
     enable_wasm: options.wasm,
@@ -234,8 +235,13 @@ export async function handleLocalFile(
   const distDir = path.join(npmDirectory, 'dist');
 
   if (!useLocalFile) {
-    const urlPath = path.join(distDir, fileName);
-    await fsExtra.copy(url, urlPath);
+    // Back up the original dist first, as stageLocalTree does, so
+    // restoreLocalTree can take this file out again after the run.
+    const distBakDir = path.join(npmDirectory, 'dist_bak');
+    if (!(await fsExtra.pathExists(distBakDir))) {
+      await fsExtra.copy(distDir, distBakDir);
+    }
+    await fsExtra.copy(url, path.join(distDir, fileName));
   } else {
     await stageLocalTree(path.dirname(url));
   }
@@ -267,6 +273,20 @@ Terminal=false
 `;
 }
 
+// Tauri always writes its own desktop entry into deb and rpm payloads, so
+// shipping Pake's entry as an extra file left two launchers in the app menu.
+// Rendering Pake's content through that single entry keeps exactly one.
+export function applyLinuxDesktopTemplate(
+  linuxBundle: NonNullable<PakeTauriConfig['bundle']['linux']>,
+  templatePath: string,
+): void {
+  linuxBundle.deb.desktopTemplate = templatePath;
+  if (!linuxBundle.rpm) {
+    linuxBundle.rpm = {};
+  }
+  linuxBundle.rpm.desktopTemplate = templatePath;
+}
+
 async function mergeLinuxConfig(
   options: PakeAppOptions,
   name: string,
@@ -294,17 +314,7 @@ async function mergeLinuxConfig(
   await fsExtra.ensureDir(srcAssetsDir);
   await fsExtra.writeFile(srcDesktopFilePath, desktopContent);
 
-  const desktopInstallPath = `/usr/share/applications/${desktopFileName}`;
-  linuxBundle.deb.files = {
-    [desktopInstallPath]: `assets/${desktopFileName}`,
-  };
-
-  if (!linuxBundle.rpm) {
-    linuxBundle.rpm = {};
-  }
-  linuxBundle.rpm.files = {
-    [desktopInstallPath]: `assets/${desktopFileName}`,
-  };
+  applyLinuxDesktopTemplate(linuxBundle, `assets/${desktopFileName}`);
 
   // options.targets reaches here already stripped of any -arm64 suffix by the
   // LinuxBuilder constructor, and may carry several comma-separated formats

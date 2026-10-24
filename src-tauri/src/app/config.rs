@@ -8,6 +8,10 @@ use tauri::Url;
 pub struct WindowConfig {
     pub url: String,
     pub hide_title_bar: bool,
+    /// macOS only, set by the runtime builder rather than a CLI flag: a native
+    /// transparent title bar above the page, painted with the page's top color.
+    #[serde(default)]
+    pub transparent_title_bar: bool,
     #[serde(default)]
     pub hide_window_decorations: bool,
     pub fullscreen: bool,
@@ -22,6 +26,8 @@ pub struct WindowConfig {
     pub activation_shortcut: String,
     pub hide_on_close: bool,
     pub incognito: bool,
+    #[serde(default = "default_restore_last_url")]
+    pub restore_last_url: bool,
     #[serde(default)]
     pub password_autosave: bool,
     pub title: Option<String>,
@@ -50,10 +56,27 @@ fn default_zoom() -> u32 {
     100
 }
 
+fn default_restore_last_url() -> bool {
+    true
+}
+
 #[cfg(any(windows, test))]
 impl WindowConfig {
     pub fn password_autosave_enabled(&self) -> bool {
         self.password_autosave && !self.incognito
+    }
+}
+
+impl WindowConfig {
+    pub fn remembers_last_url(&self) -> bool {
+        self.restore_last_url && self.url_type == "web" && !self.incognito
+    }
+
+    /// The overlay title bar (`hide_title_bar`) keeps precedence, so existing
+    /// configs behave exactly as before.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub fn title_bar_follows_page(&self) -> bool {
+        self.transparent_title_bar && !self.hide_title_bar
     }
 }
 
@@ -188,6 +211,36 @@ mod tests {
     }
 
     #[test]
+    fn last_url_restoration_defaults_on_and_preserves_private_and_local_exclusions() {
+        let mut window = config_for("https://example.com").windows.remove(0);
+        let mut legacy = serde_json::to_value(&window).unwrap();
+        legacy.as_object_mut().unwrap().remove("restore_last_url");
+        let legacy: WindowConfig = serde_json::from_value(legacy.clone()).unwrap();
+        assert!(legacy.restore_last_url);
+        assert!(legacy.remembers_last_url());
+
+        for enabled in [false, true] {
+            for incognito in [false, true] {
+                for url_type in ["web", "local"] {
+                    window.restore_last_url = enabled;
+                    window.incognito = incognito;
+                    window.url_type = url_type.into();
+                    assert_eq!(
+                        window.remembers_last_url(),
+                        enabled && !incognito && url_type == "web"
+                    );
+                }
+            }
+        }
+
+        let mut disabled = serde_json::to_value(legacy).unwrap();
+        disabled["restore_last_url"] = false.into();
+        let disabled: WindowConfig = serde_json::from_value(disabled).unwrap();
+        assert!(!disabled.remembers_last_url());
+        assert!(!disabled.incognito);
+    }
+
+    #[test]
     fn password_autosave_is_opt_in_and_disabled_in_private_windows() {
         let mut window = config_for("https://example.com").windows.remove(0);
         for enabled in [false, true] {
@@ -202,6 +255,27 @@ mod tests {
         let legacy: WindowConfig = serde_json::from_value(legacy).unwrap();
         assert!(!legacy.password_autosave);
         assert!(!legacy.password_autosave_enabled());
+    }
+
+    #[test]
+    fn transparent_title_bar_is_opt_in_and_yields_to_the_overlay() {
+        let mut window = config_for("https://example.com").windows.remove(0);
+        let mut legacy = serde_json::to_value(&window).unwrap();
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("transparent_title_bar");
+        let legacy: WindowConfig = serde_json::from_value(legacy).unwrap();
+        assert!(!legacy.transparent_title_bar);
+        assert!(!legacy.title_bar_follows_page());
+
+        for transparent in [false, true] {
+            for hidden in [false, true] {
+                window.transparent_title_bar = transparent;
+                window.hide_title_bar = hidden;
+                assert_eq!(window.title_bar_follows_page(), transparent && !hidden);
+            }
+        }
     }
 
     fn resolve(config: &PakeConfig) -> Resolved {

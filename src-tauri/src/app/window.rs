@@ -1,10 +1,12 @@
 use crate::app::config::PakeConfig;
 #[cfg(target_os = "windows")]
 use crate::app::navigation::set_password_autosave;
+#[cfg(not(target_os = "windows"))]
 use crate::util::{
-    check_file_or_append, data_dir_name, get_data_dir, get_download_dir,
-    get_download_message_with_lang, sanitize_download_filename, show_toast, MessageType,
+    check_file_or_append, get_download_dir, get_download_message_with_lang,
+    sanitize_download_filename, show_toast, MessageType,
 };
+use crate::util::{data_dir_name, get_data_dir};
 #[cfg(target_os = "macos")]
 use dispatch::Queue;
 #[cfg(target_os = "macos")]
@@ -18,8 +20,10 @@ use std::{
     str::FromStr,
     sync::atomic::{AtomicU32, Ordering},
 };
+#[cfg(not(target_os = "windows"))]
+use tauri::webview::DownloadEvent;
 use tauri::{
-    webview::{DownloadEvent, NewWindowFeatures, NewWindowResponse},
+    webview::{NewWindowFeatures, NewWindowResponse},
     AppHandle, Config, Manager, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
 };
 
@@ -56,7 +60,7 @@ fn prepare_macos_new_window_configuration(features: &NewWindowFeatures) -> tauri
 fn build_proxy_browser_arg(url: &Url) -> Option<String> {
     let host = url.host_str()?;
     let scheme = url.scheme();
-    let port = url.port().or_else(|| match scheme {
+    let port = url.port().or(match scheme {
         "http" => Some(80),
         "socks5" => Some(1080),
         _ => None,
@@ -431,10 +435,7 @@ fn build_window(
         ))
     })?;
 
-    let restored_url = if label == "pake"
-        && window_config.url_type == "web"
-        && !window_config.incognito
-    {
+    let restored_url = if label == "pake" && window_config.remembers_last_url() {
         match app.path().app_data_dir() {
             Ok(directory) => match crate::util::read_last_url(&directory.join("last-url.txt")) {
                 Ok(url) => url,
@@ -469,6 +470,28 @@ fn build_window(
 
     let url = restored_url.map(WebviewUrl::External).unwrap_or(url);
 
+    // Install the native download handler before a remote entry page can respond
+    // with an attachment. about:blank popups still keep their own WindowProxy.
+    #[cfg(target_os = "windows")]
+    let download_target = match &url {
+        WebviewUrl::External(target) if matches!(target.scheme(), "http" | "https") => {
+            Some(target.clone())
+        }
+        WebviewUrl::App(path) => path
+            .to_str()
+            .and_then(|path| Url::parse(path).ok())
+            .filter(|target| matches!(target.scheme(), "http" | "https")),
+        _ => None,
+    };
+    #[cfg(target_os = "windows")]
+    let url = if download_target.is_some() {
+        WebviewUrl::CustomProtocol(Url::parse("about:blank").map_err(|error| {
+            tauri::Error::Io(std::io::Error::new(std::io::ErrorKind::InvalidInput, error))
+        })?)
+    } else {
+        url
+    };
+
     // The delegate must be installed before the first TLS challenge. Start on
     // a neutral page, then navigate from the with_webview callback below.
     #[cfg(target_os = "macos")]
@@ -486,6 +509,9 @@ fn build_window(
         "window.pakeConfig = {}",
         serde_json::to_string(&window_config).unwrap_or_else(|_| "{}".to_string())
     );
+    // A host-provided marker avoids relying on a site's overridden user agent.
+    #[cfg(target_os = "windows")]
+    let config_script = format!("{config_script}; window.pakeNativeDownloads = true;");
 
     // Platform-specific title: macOS prefers empty, others fallback to product name
     let effective_title = window_config.title.as_deref().unwrap_or_else(|| {
@@ -607,13 +633,20 @@ fn build_window(
     window_builder = window_builder
         .initialization_script(include_str!("../inject/event.js"))
         .initialization_script(include_str!("../inject/style.js"))
-        .initialization_script(include_str!("../inject/theme_refresh.js"))
-        .initialization_script(
-            config
-                .runtime_custom_js
-                .as_deref()
-                .unwrap_or(include_str!("../inject/custom.js")),
-        );
+        .initialization_script(include_str!("../inject/theme_refresh.js"));
+
+    #[cfg(target_os = "macos")]
+    if window_config.title_bar_follows_page() {
+        window_builder =
+            window_builder.initialization_script(include_str!("../inject/title_bar.js"));
+    }
+
+    window_builder = window_builder.initialization_script(
+        config
+            .runtime_custom_js
+            .as_deref()
+            .unwrap_or(include_str!("../inject/custom.js")),
+    );
 
     #[cfg(target_os = "windows")]
     let mut windows_browser_args = String::from("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-blink-features=AutomationControlled");
@@ -669,10 +702,17 @@ fn build_window(
     {
         let title_bar_style = if window_config.hide_title_bar {
             TitleBarStyle::Overlay
+        } else if window_config.title_bar_follows_page() {
+            // The page starts below the bar, so the traffic lights never cover
+            // it; title_bar.js paints the bar with the page's top color.
+            TitleBarStyle::Transparent
         } else {
             TitleBarStyle::Visible
         };
         window_builder = window_builder.title_bar_style(title_bar_style);
+        if window_config.title_bar_follows_page() {
+            window_builder = window_builder.hidden_title(true);
+        }
         window_builder = window_builder.theme(theme);
 
         // Tauri disables automatic tabbing unless an identifier is provided.
@@ -752,6 +792,7 @@ fn build_window(
     // through the JS bridge, and downloads triggered from a sandboxed iframe
     // can't reach the IPC either. Letting the browser download natively and
     // catching it here is independent of the page CSP and the IPC channel.
+    #[cfg(not(target_os = "windows"))]
     {
         let download_handle = app.clone();
         window_builder = window_builder.on_download(move |webview, event| match event {
@@ -831,6 +872,9 @@ fn build_window(
             eprintln!("[Pake] Failed to access WebView2 for password autosave: {error}");
         }
     }
+
+    #[cfg(target_os = "windows")]
+    crate::app::download::install(&window, download_target)?;
 
     // Every webview is built here (main window, Cmd+N clones, --new-window and
     // blank two-stage popups), so trackpad history swipes match in all of them.
@@ -951,3 +995,8 @@ mod proxy_arg_tests {
         assert!(build_proxy_browser_arg(&parse("https://proxy.local:8443")).is_none());
     }
 }
+
+#[cfg(all(test, target_os = "windows"))]
+#[cfg(feature = "native-download-probe")]
+#[path = "native_download_smoke.rs"]
+mod native_download_smoke;

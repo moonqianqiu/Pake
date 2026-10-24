@@ -1,7 +1,8 @@
 {
   "name": "pake-cli",
-  "version": "3.17.3",
-  "description": "🤱🏻 Turn any webpage into a desktop app with one command. 🤱🏻 一键打包网页生成轻量桌面应用。",
+  "version": "3.17.7",
+  "description": "Turn any website into a lightweight desktop app with one command. 一键把网站打包成轻量桌面应用。",
+  "homepage": "https://pake.run",
   "engines": {
     "node": ">=20.9.0"
   },
@@ -23,6 +24,10 @@
     "rust",
     "tauri",
     "no-electron",
+    "electron-alternative",
+    "desktop-app",
+    "webview",
+    "website-to-app",
     "productivity"
   ],
   "files": [
@@ -64,7 +69,7 @@
     "ora": "^9.3.0",
     "prompts": "^2.4.2",
     "psl": "^1.15.0",
-    "sharp": "^0.35.0",
+    "sharp": "^0.35.5",
     "tmp-promise": "^3.0.3",
     "update-notifier": "^7.3.1"
   },
@@ -89,8 +94,8 @@
   },
   "pnpm": {
     "overrides": {
-      "sharp": "^0.35.0",
-      "@img/sharp-libvips-darwin-arm64": "1.3.0",
+      "sharp": "^0.35.5",
+      "@img/sharp-libvips-darwin-arm64": "1.3.4",
       "tmp": "0.2.7"
     },
     "onlyBuiltDependencies": [

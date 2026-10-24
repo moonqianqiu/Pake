@@ -30,8 +30,8 @@ const GDK_BACKEND: &str = "GDK_BACKEND";
 use app::{
     invoke::{
         clear_dock_badge, close_notification, download_file, increment_dock_badge,
-        send_notification, set_dock_badge, set_dock_badge_label, set_zoom, update_theme_mode,
-        webview_navigate,
+        send_notification, set_dock_badge, set_dock_badge_label, set_title_bar_color, set_zoom,
+        update_theme_mode, webview_navigate,
     },
     setup::{set_global_shortcut, set_system_tray},
     window::{
@@ -289,25 +289,28 @@ pub fn run_app() {
         apply_linux_webkit_runtime_flags();
     }
 
-    let (pake_config, tauri_config, runtime_app) = get_pake_config();
+    let (pake_config, tauri_config) = get_pake_config();
+    // A runtime app sets the shell's AppUserModelID to its identifier so
+    // shortcuts and toasts group with its windows; CLI apps keep the default.
     #[cfg(windows)]
-    if let Some(id) = util::app_user_model_id(runtime_app.as_ref()) {
-        util::set_app_user_model_id(id);
+    if pake_config.runtime_app {
+        util::set_app_user_model_id(&tauri_config.identifier);
     }
     let mut context = tauri::generate_context!();
     // Paths, app data and the macOS menu derive from the context, so a runtime
     // app must not share the template's identity.
-    if let Some(app) = runtime_app {
-        context.config_mut().identifier = app.identifier;
-        context.config_mut().product_name = Some(app.product_name.clone());
-        context.package_info_mut().name = app.product_name;
+    if pake_config.runtime_app {
+        context.config_mut().identifier = tauri_config.identifier.clone();
+        if let Some(name) = &tauri_config.product_name {
+            context.config_mut().product_name = Some(name.clone());
+            context.package_info_mut().name = name.clone();
+        }
     }
     let tauri_app = tauri::Builder::default();
 
     let show_system_tray = pake_config.show_system_tray();
     let hide_on_close = pake_config.windows[0].hide_on_close;
-    let remember_url =
-        pake_config.windows[0].url_type == "web" && !pake_config.windows[0].incognito;
+    let remember_url = pake_config.windows[0].remembers_last_url();
     let activation_shortcut = pake_config.windows[0].activation_shortcut.clone();
     let init_fullscreen = pake_config.windows[0].fullscreen;
     let start_to_tray = pake_config.windows[0].start_to_tray && show_system_tray; // Only valid when tray is enabled
@@ -409,6 +412,7 @@ pub fn run_app() {
             update_theme_mode,
             set_zoom,
             webview_navigate,
+            set_title_bar_color,
         ])
         .setup(move |app| {
             // Grant remote IPC only to the immutable, packaged entry origins,

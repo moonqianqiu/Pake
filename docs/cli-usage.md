@@ -1,12 +1,14 @@
 # CLI Usage Guide
 
-<h4 align="right"><strong>English</strong> | <a href="cli-usage_CN.md">简体中文</a></h4>
+<div align="center">
+
+**English** · [中文](cli-usage_CN.md)
+
+</div>
 
 Complete command-line reference and basic usage for Pake CLI.
 
 ## Installation
-
-Ensure that your Node.js version is 22.0 or higher (e.g., 22.11.0). _Note: Older versions ≥20.0.0 may also work._
 
 **Recommended (pnpm):**
 
@@ -34,22 +36,21 @@ source ~/.bashrc
 
 **Prerequisites:**
 
-- Node.js ≥20.0.0
-- Rust ≥1.85.0 (installed automatically if missing)
+- Node.js ≥20.9.0
+- Rust ≥1.85.0 (prompts to install if missing; non-interactive and `--json` runs fail with `ENV_MISSING` instead)
 - **macOS/Linux**: `curl`, `wget`, `file` and `tar` used for dependency management
 
 ## Quick Start
 
 ```bash
-# Basic usage - automatically fetches website icon
+# Basic usage, fetches the website icon automatically
 pake https://github.com --name "GitHub"
 
-# Advanced usage with custom options
+# Advanced usage, custom options
 pake https://weekly.tw93.fun --name "Weekly" --icon https://cdn.tw93.fun/pake/weekly.icns --width 1200 --height 800 --hide-title-bar
 
-# Complete example with multiple options
+# Complete example, multiple options combined
 pake https://github.com --name "GitHub Desktop" --width 1400 --height 900 --show-system-tray --debug
-
 ```
 
 ## CLI Usage
@@ -58,11 +59,11 @@ pake https://github.com --name "GitHub Desktop" --width 1400 --height 900 --show
 pake [url] [options]
 ```
 
-The packaged application will be located in the current working directory by default. The first packaging might take some time due to environment configuration. Please be patient.
+The packaged application will be located in the current working directory by default. The first build sets up the environment and takes longer, later builds are fast.
 
 > **macOS Output**: On macOS, Pake creates DMG installers by default. To create `.app` bundles for testing (to avoid user interaction), set the environment variable `PAKE_CREATE_APP=1`. If you want Pake to install the app directly into `/Applications`, use `--install`, which builds an `.app`, copies it into `/Applications`, and removes the local bundle after a successful install.
 >
-> **Note**: Packaging requires the Rust environment. If Rust is not installed, you will be prompted for installation confirmation. In case of installation failure or timeout, you can [install it manually](https://www.rust-lang.org/tools/install).
+> **Rust**: Packaging requires Rust. If it is missing, you will be asked whether to install it, and if installation fails or times out, you can [install it manually](https://www.rust-lang.org/tools/install).
 
 ### [url]
 
@@ -80,7 +81,7 @@ For local packaging, hash-based routing works out of the box; history-mode SPA r
 
 ### [options]
 
-Various options are available for customization. `pake --help` shows every supported CLI option. This page is the complete reference.
+The table lists the common options, `pake --help` shows every option, and each one is documented in full below.
 
 | Option                      | Description                                         | Example                                        |
 | --------------------------- | --------------------------------------------------- | ---------------------------------------------- |
@@ -96,13 +97,9 @@ Various options are available for customization. `pake --help` shows every suppo
 | `--help`                    | Show all CLI options                                | `--help`                                       |
 | `--version`                 | Show CLI version                                    | `--version`                                    |
 
-For complete options, see detailed sections below.
-
 #### [name]
 
-Specify the application name. If not provided, you will be prompted to enter it. It is recommended to use English.
-
-**Note**: Also supports multiple words with automatic platform-specific handling:
+Specify the application name. If not provided, you will be prompted to enter it. English names work best, and names with spaces are handled per platform:
 
 - **Windows/macOS**: Preserves spaces and case (e.g., `"Google Translate"`)
 - **Linux**: Converts to lowercase with hyphens (e.g., `"google-translate"`)
@@ -113,6 +110,14 @@ Specify the application name. If not provided, you will be prompted to enter it.
 
 # Multiple words (if needed):
 --name "Google Translate"
+```
+
+#### [identifier]
+
+Set the bundle identifier explicitly. By default Pake derives `com.pake.a<hash>` from the URL and `--name`, so two apps wrapping the same URL under different names install separately. The value must start with a letter, contain only letters, digits, hyphens and dots, and end with a letter or digit.
+
+```shell
+--identifier com.example.github.work
 ```
 
 #### [icon]
@@ -137,20 +142,20 @@ pake https://github.com --name GitHub
 --icon https://cdn.tw93.fun/pake/weekly.icns  # Remote icon (.icns for macOS)
 ```
 
-#### [height]
-
-Set the height of the application window. Default is `780px`.
-
-```shell
---height <number>
-```
-
 #### [width]
 
 Set the width of the application window. Default is `1200px`.
 
 ```shell
 --width <number>
+```
+
+#### [height]
+
+Set the height of the application window. Default is `780px`.
+
+```shell
+--height <number>
 ```
 
 #### [min-width]
@@ -197,8 +202,7 @@ Hide the native window decorations on Windows and Linux. Default is `false`. Thi
 
 #### [fullscreen]
 
-Determine whether the application launches in full screen. Default is `false`. Use the following command to enable full
-screen.
+Determine whether the application launches in full screen. Default is `false`. Use the following command to enable full screen.
 
 ```shell
 --fullscreen
@@ -206,8 +210,7 @@ screen.
 
 #### [maximize]
 
-Determine whether the application launches with a maximized window. Default is `false`. Use the following command to enable
-maximize.
+Determine whether the application launches with a maximized window. Default is `false`. Use the following command to enable maximize.
 
 ```shell
 --maximize
@@ -215,7 +218,7 @@ maximize.
 
 #### [activation-shortcut]
 
-Set the activation shortcut for the application. Default is empty, so it does not take effect. You can customize the activation shortcut with the following commands, e.g. `CmdOrControl+Shift+P`. Usage can refer to [available-modifiers](https://www.electronjs.org/docs/latest/api/accelerator#available-modifiers).
+Set the activation shortcut for the application. Default is empty, so it does not take effect. Write it as modifiers and one key joined by `+`, e.g. `CmdOrControl+Shift+P`. Modifiers are `CmdOrControl` (Cmd on macOS, Ctrl elsewhere), `Cmd` or `Super`, `Ctrl`, `Alt` or `Option`, and `Shift`; the key is a letter, a digit, `F1` to `F24`, or a name such as `Space`, `Enter`, `Escape` or `Up`.
 
 ```shell
 --activation-shortcut <string>
@@ -304,7 +307,7 @@ Package the application to support both Intel and M1 chips, exclusively for macO
 
 ##### Prerequisites
 
-- Note: After enabling this option, Rust must be installed using rustup from the official Rust website. Installation via brew is not supported.
+- After enabling this option, Rust must be installed using rustup from the official Rust website. Installation via brew is not supported.
 - For Intel chip users, install the arm64 cross-platform package to support M1 chips using the following command:
 
   ```shell
@@ -435,7 +438,7 @@ Start the application minimized to system tray instead of showing the window. Mu
 pake https://github.com --name GitHub --show-system-tray --start-to-tray
 ```
 
-**Note**: Double-click the tray icon to show/hide the window. If used without `--show-system-tray`, this option is ignored.
+Bring the window back or hide it again with Show and Hide in the tray menu. On Windows, a left click on the tray icon also shows or hides it. Without `--show-system-tray`, this option is ignored.
 
 #### [title]
 
@@ -447,6 +450,14 @@ Set the window title bar text. macOS shows no title if not specified; Windows/Li
 # Examples:
 --title "My Application"
 --title "Google Translate"
+```
+
+#### [no-restore-last-url]
+
+Web apps restore the main window's last URL by default. Use this option to open the packaged URL on every launch while keeping cookies, local storage, and login sessions. In a `--config` JSON file, set `"restoreLastUrl": false`. Incognito sessions and local pages do not restore URLs.
+
+```shell
+pake https://www.rememberthemilk.com --name RememberTheMilk --no-restore-last-url
 ```
 
 #### [incognito]
@@ -504,7 +515,7 @@ pake https://github.com --name GitHub --keep-binary
 
 #### [iterative-build]
 
-Turn on rapid build mode (app only, no dmg/deb/msi), good for debugging. Default is `false`.
+macOS only: build the `.app` and skip DMG packaging, good for debugging. Default is `false`.
 
 ```shell
 --iterative-build
@@ -706,10 +717,6 @@ This can help sites that rely on popup auth windows, but it does not guarantee i
 ```shell
 --new-window
 ```
-
-### Packaging Complete
-
-After completing the above steps, your application should be successfully packaged. Please note that the packaging process may take some time depending on your system configuration and network conditions. Be patient, and once the packaging is complete, you can find the application installer in the specified directory.
 
 ## Docker
 
