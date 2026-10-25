@@ -27,7 +27,7 @@ jobs:
           { "title": "Kimi",        "name": "Kimi",        "url": "https://www.kimi.com",           "icon": "https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/kimi.png",       "enabled": true },
           { "title": "Qwen",        "name": "Qwen",        "url": "https://chat.qwen.ai",           "icon": "https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/qwen.png",       "enabled": true },
           { "title": "Z",           "name": "Z",           "url": "https://chat.z.ai",              "icon": "https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/zai.png",        "enabled": true },
-          { "title": "Minimax",     "name": "Minimax",     "url": "https://agent.minimaxi.com",     "icon": "https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/minimax.png",    "enabled": true },
+          { "title": "Minimax",     "name": "Minimax",     "url": "https://agent.minimaxi.com",     "icon": "https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/minimax.png",    "enabled": false },
           { "title": "HuggingChat", "name": "HuggingChat", "url": "https://huggingface.co/chat",    "icon": "https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/huggingface.png","enabled": true },
           { "title": "MIMO",        "name": "MIMO",        "url": "https://aistudio.xiaomimimo.com","icon": "https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/xiaomimimo.png", "enabled": true },
           { "title": "StepFun",     "name": "StepFun",     "url": "https://studio.stepfun.com",     "icon": "https://raw.githubusercontent.com/moonqianqiu/STORE/refs/heads/main/ICONS/stepfun.png",    "enabled": true },
