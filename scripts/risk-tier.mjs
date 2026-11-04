@@ -61,6 +61,7 @@ export const TIERS = [
       "Run Fast Test Suite and Rust Code Quality green at the exact pushed SHA",
     patterns: [
       ".github/workflows/quality-and-test.yml",
+      ".github/workflows/update-contributors.yml",
       ".github/actions/*",
       "tests/index.js",
       "scripts/check-incidents.mjs",

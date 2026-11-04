@@ -3,8 +3,15 @@ name: Quality & Testing
 on:
   push:
     branches: [main, dev]
+    # Files no job reads start no run: Markdown (except docs/incidents.md,
+    # which the vitest ledger check reads), images, contributors and agent or
+    # plugin files. Formatting runs in update-contributors.yml on every push,
+    # docs included. A release or npm publish that targets a docs-only commit
+    # dispatches this workflow, which ignores paths (see AGENTS.md).
+    paths: ["**", "!**.md", "docs/incidents.md", "!CONTRIBUTORS.svg", "!assets/**", "!LICENSE*", "!.agents/**", "!.claude/**", "!.claude-plugin/**", "!plugins/**"]
   pull_request:
     branches: [main, dev]
+    paths: ["**", "!**.md", "docs/incidents.md", "!CONTRIBUTORS.svg", "!assets/**", "!LICENSE*", "!.agents/**", "!.claude/**", "!.claude-plugin/**", "!plugins/**"]
   workflow_dispatch:
 
 env:
@@ -19,41 +26,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  auto-format:
-    name: Auto-fix Formatting
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push'
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Setup Development Environment
-        uses: ./.github/actions/setup-env
-        with:
-          mode: node
-
-      - name: Auto-fix Prettier formatting
-        run: npx prettier --write . --ignore-unknown --cache
-
-      - name: Auto-fix Rust formatting
-        run: cargo fmt --all --manifest-path src-tauri/Cargo.toml
-
-      - name: Commit formatting fixes
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add .
-          if ! git diff --staged --quiet; then
-            git commit -m "Auto-fix formatting issues"
-            git push
-          else
-            echo "No formatting changes to commit"
-          fi
-
-
   rust-quality:
     name: Rust Code Quality
     runs-on: ubuntu-24.04
@@ -145,11 +117,12 @@ jobs:
           # (tests/unit/check-incidents.test.ts); the others stay shallow.
           fetch-depth: ${{ matrix.os == 'ubuntu-24.04' && '0' || '1' }}
 
+      # The fast suite builds the CLI with rollup and never compiles Rust, so
+      # it skips the 1.5 GB Rust cache restore and toolchain setup.
       - name: Setup Build Environment
         uses: ./.github/actions/setup-env
         with:
-          mode: build
-          rust-cache-save: false
+          mode: node
 
       - name: Build CLI
         run: pnpm run cli:build
@@ -236,7 +209,7 @@ jobs:
   summary:
     name: Quality Summary
     runs-on: ubuntu-latest
-    needs: [auto-format, rust-quality, rust-quality-windows, validation-fast, validation-full, docker-validation]
+    needs: [rust-quality, rust-quality-windows, validation-fast, validation-full, docker-validation]
     if: always()
     steps:
       - name: Generate Summary
@@ -246,7 +219,6 @@ jobs:
             echo ""
             echo "| Check | Status |"
             echo "|-------|--------|"
-            echo "| Auto Formatting | ${{ needs.auto-format.result == 'success' && 'PASSED' || needs.auto-format.result == 'skipped' && 'SKIPPED' || 'FAILED' }} |"
             echo "| Rust Quality | ${{ needs.rust-quality.result == 'success' && 'PASSED' || 'FAILED' }} |"
             echo "| Rust Quality (Windows) | ${{ needs.rust-quality-windows.result == 'success' && 'PASSED' || 'FAILED' }} |"
             echo "| CLI Fast Validation | ${{ needs.validation-fast.result == 'success' && 'PASSED' || 'FAILED' }} |"
