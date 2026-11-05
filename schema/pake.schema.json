@@ -176,7 +176,7 @@
     },
     "enableDragDrop": {
       "type": "boolean",
-      "description": "Enable drag and drop.",
+      "description": "Deprecated and ignored. Pages handle drag and drop and file drops by default.",
       "default": false
     },
     "keepBinary": {

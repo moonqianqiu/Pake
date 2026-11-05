@@ -1,8 +1,7 @@
 <div align="center">
   <img src="https://raw.githubusercontent.com/tw93/Pake/ac5508cf519064684c4214fe3f263c58ad7aaf5f/assets/logo.png" width="138" />
   <h1>Pake</h1>
-  <p><b>Turn any website into a lightweight desktop app with one command. Supports macOS, Windows, and Linux.</b></p>
-  <p><a href="https://pake.run">pake.run</a></p>
+  <p><b>Turn any website into a lightweight desktop app with one command. Supports macOS, Windows and Linux. Free open-source CLI, plus a desktop app.</b></p>
   <p>English · <a href="README_CN.md">中文</a> · <a href="README_TW.md">繁體</a> · <a href="README_JA.md">日本語</a> · <a href="README_KR.md">한국어</a> · <a href="README_DE.md">Deutsch</a> · <a href="README_FR.md">Français</a></p>
   <a href="https://x.com/HiTw93" target="_blank"><img alt="twitter" src="https://img.shields.io/badge/follow-Tw93-red?style=flat-square&logo=x"></a>
   <a href="https://t.me/+9f9gf4ZrFSQ2OWVl" target="_blank"><img alt="telegram" src="https://img.shields.io/badge/chat-telegram-blueviolet?style=flat-square&logo=Telegram"></a>
@@ -11,16 +10,18 @@
   <a href="https://github.com/tw93/Pake/issues?q=is%3Aissue+is%3Aclosed" target="_blank"><img alt="GitHub closed issues" src="https://img.shields.io/github/issues-closed/tw93/Pake.svg?style=flat-square"></a>
 </div>
 
+> This repo is the free open-source Pake CLI, and everything below stays free. Prefer a graphical app? The Pake desktop app is a separate download from [pake.run](https://pake.run/), its only official site. It makes apps from a ready-made gallery or any URL without Node.js or Rust, with settings, updates and separate apps for other accounts in one window. `pnpm install -g pake-cli` installs the CLI only.
+
 ## Features
 
-- 🎐 **Lightweight**: Installer is nearly 20 times smaller than Electron packages, typically under 10 MB on disk, a lighter alternative to Nativefier and other Electron wrappers
-- 🚀 **Fast**: Built with Rust Tauri, much faster than traditional JS frameworks with lower memory usage
-- ⚡ **Easy to use**: One-command packaging via CLI or online building, no complex configuration needed
-- 📦 **Feature-rich**: Supports shortcuts, immersive windows, drag & drop, style customization, ad removal
+- **Lightweight**: Installers are typically under 10 MB, nearly 20 times smaller than Electron packages, a lighter alternative to Nativefier and other Electron wrappers
+- **Fast**: Built with Rust Tauri on the system WebView instead of a bundled Chromium, so apps use less memory than Electron ones
+- **Easy to use**: One-command packaging via CLI or online building, no complex configuration needed
+- **Feature-rich**: Supports shortcuts, immersive windows, drag & drop, style customization, ad removal
 
 ## Getting Started
 
-- **Beginners**: Download ready-made [Popular Packages](#popular-packages) or use [Online Building](docs/github-actions-usage.md) with no environment setup required
+- **Beginners**: Make apps without a command line in the [Pake desktop app](https://pake.run/), download ready-made [Popular Packages](#popular-packages) or use [Online Building](docs/github-actions-usage.md) with no environment setup required
 - **Developers**: Install [CLI Tool](docs/cli-usage.md) for one-command packaging of any website with customizable icons, window settings, and more
 - **Advanced Users**: Clone the project locally for [Custom Development](#development), or check [Advanced Usage](docs/advanced-usage.md) for style customization and feature enhancement
 - **Troubleshooting**: Check [FAQ](docs/faq.md) for common issues and solutions
@@ -34,7 +35,7 @@
             <a href="https://github.com/tw93/Pake/releases/latest/download/WeRead_x64.msi">Windows</a>
             <a href="https://github.com/tw93/Pake/releases/latest/download/WeRead_x86_64.deb">Linux</a>
         </td>
-        <td>Twitter
+        <td>X
             <a href="https://github.com/tw93/Pake/releases/latest/download/Twitter.dmg">Mac</a>
             <a href="https://github.com/tw93/Pake/releases/latest/download/Twitter_x64.msi">Windows</a>
             <a href="https://github.com/tw93/Pake/releases/latest/download/Twitter_x86_64.deb">Linux</a>
@@ -142,8 +143,10 @@
     </tr>
 </table>
 
+More apps are on the [Releases](https://github.com/tw93/Pake/releases) page.
+
 <details>
-<summary>🏂 You can download more applications from <a href="https://github.com/tw93/Pake/releases">Releases</a>. <b>Click here to expand the shortcuts reference!</b></summary>
+<summary><b>Keyboard shortcuts</b></summary>
 
 <br/>
 
@@ -212,7 +215,7 @@ Requires Rust `>=1.85` and Node `>=22` (recommended LTS; `>=20.9` also works), s
 # Install dependencies
 pnpm i
 
-# Local development [right-click to open debug mode]
+# Local development, right-click to open the debug tools
 pnpm run dev
 
 # Build application
@@ -221,9 +224,9 @@ pnpm run build
 
 For style customization, feature enhancement, container communication and other advanced features, see [Advanced Usage Documentation](docs/advanced-usage.md).
 
-## Developers
+## Contributors
 
-Pake wouldn't be possible without these incredible contributors. ❤️
+Pake wouldn't be possible without these incredible contributors.
 
 <a href="https://github.com/tw93/Pake/graphs/contributors">
   <img src="./CONTRIBUTORS.svg?v=2" alt="Contributors" width="1000" />
@@ -231,14 +234,14 @@ Pake wouldn't be possible without these incredible contributors. ❤️
 
 ## Support
 
-- The most direct way to support me is getting [Mole for Mac](https://mole.fit), my paid Mac cleanup app
+- Getting the [Pake desktop app](https://pake.run/) is the most direct way to support Pake's development
 - If Pake helped you, give it a star, [share it](https://x.com/intent/tweet?url=https://github.com/tw93/Pake&text=Pake%20-%20Turn%20any%20webpage%20into%20a%20desktop%20app%20with%20one%20command.%20Nearly%2020x%20smaller%20than%20Electron%20packages,%20supports%20macOS%20Windows%20Linux), or open an issue or PR, including sites that would make good desktop apps
-- I have two cats, TangYuan and Coke, and if Pake makes your life a little easier, feel free to treat them to <a href="https://cats.tw93.fun?name=Pake" target="_blank">canned food 🥩</a>
+- I have two cats, TangYuan and Coke, and if Pake makes your life a little easier, feel free to treat them to <a href="https://cats.tw93.fun?name=Pake" target="_blank">canned food</a>
 
-These lovely people already did 🐱
+These lovely people already did
 
 <a href="https://cats.tw93.fun?name=Pake"><img src="https://raw.githubusercontent.com/tw93/sponsors/main/assets/sponsors.svg" width="1000" loading="lazy" /></a>
 
 ## License
 
-Pake is open source under GPL-3.0, see [LICENSE](./LICENSE) and [Pake Output Exception](./LICENSE-EXCEPTION); apps you build with Pake are entirely yours to use and distribute. If you fork Pake into your own product, to avoid confusion please give it a different name and credit Pake as the source.
+Pake is open source under GPL-3.0, see [LICENSE](./LICENSE) and [Pake Output Exception](./LICENSE-EXCEPTION); apps you build with Pake are entirely yours to use and distribute. If you fork Pake into your own product, to avoid confusion please give it a different name and credit Pake as the source. Pake CLI stays open source for the long run.

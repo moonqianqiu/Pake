@@ -1,8 +1,7 @@
 <div align="center">
   <img src="https://raw.githubusercontent.com/tw93/Pake/ac5508cf519064684c4214fe3f263c58ad7aaf5f/assets/logo.png" width="138" />
   <h1>Pake</h1>
-  <p><b>Transformez n'importe quelle page web en application de bureau en une seule commande. Compatible macOS, Windows et Linux.</b></p>
-  <p><a href="https://pake.run">pake.run</a></p>
+  <p><b>Transformez n'importe quelle page web en application de bureau en une seule commande. Compatible macOS, Windows et Linux. CLI libre et gratuite, plus une application de bureau.</b></p>
   <p><a href="README.md">English</a> · <a href="README_CN.md">中文</a> · <a href="README_TW.md">繁體</a> · <a href="README_JA.md">日本語</a> · <a href="README_KR.md">한국어</a> · <a href="README_DE.md">Deutsch</a> · Français</p>
   <a href="https://x.com/HiTw93" target="_blank"><img alt="twitter" src="https://img.shields.io/badge/follow-Tw93-red?style=flat-square&logo=x"></a>
   <a href="https://t.me/+9f9gf4ZrFSQ2OWVl" target="_blank"><img alt="telegram" src="https://img.shields.io/badge/chat-telegram-blueviolet?style=flat-square&logo=Telegram"></a>
@@ -11,16 +10,18 @@
   <a href="https://github.com/tw93/Pake/issues?q=is%3Aissue+is%3Aclosed" target="_blank"><img alt="GitHub closed issues" src="https://img.shields.io/github/issues-closed/tw93/Pake.svg?style=flat-square"></a>
 </div>
 
+> Ce dépôt est la CLI Pake, open source et gratuite, et tout ce qui suit reste gratuit. Vous préférez une interface graphique ? L'application de bureau Pake se télécharge séparément sur [pake.run](https://pake.run/), son seul site officiel. Elle crée des apps depuis une galerie prête à l'emploi ou n'importe quelle URL, sans Node.js ni Rust, avec les réglages, les mises à jour et des apps distinctes pour d'autres comptes dans une seule fenêtre. `pnpm install -g pake-cli` n'installe que la CLI.
+
 ## Fonctionnalités
 
-- 🎐 **Léger** : Paquet d'installation près de 20 fois plus petit qu'Electron, généralement moins de 10 Mo sur le disque, une alternative plus légère à Nativefier et aux autres wrappers Electron
-- 🚀 **Rapide** : Conçu avec Rust Tauri, bien plus performant que les frameworks JS classiques avec une empreinte mémoire réduite
-- ⚡ **Simple** : Une seule commande CLI ou compilation en ligne, sans configuration complexe
-- 📦 **Complet** : Prise en charge des raccourcis, fenêtres immersives, glisser-déposer, personnalisation de styles et blocage de publicités
+- **Léger** : Paquets d'installation généralement sous 10 Mo, près de 20 fois plus petits qu'avec Electron, une alternative plus légère à Nativefier et aux autres wrappers Electron
+- **Rapide** : Conçu avec Rust Tauri sur la WebView du système plutôt qu'un Chromium embarqué, les apps consomment moins de mémoire que celles d'Electron
+- **Simple** : Une seule commande CLI ou compilation en ligne, sans configuration complexe
+- **Complet** : Prise en charge des raccourcis, fenêtres immersives, glisser-déposer, personnalisation de styles et blocage de publicités
 
 ## Démarrage rapide
 
-- **Débutants** : Téléchargez des [Applications populaires](#télécharger-des-applications-populaires) prêtes à l'emploi ou utilisez la [Compilation en ligne](docs/github-actions-usage.md) sans installation locale
+- **Débutants** : Créez des apps sans ligne de commande avec l'[application de bureau Pake](https://pake.run/), téléchargez des [Applications populaires](#télécharger-des-applications-populaires) prêtes à l'emploi ou utilisez la [Compilation en ligne](docs/github-actions-usage.md) sans installation locale
 - **Développeurs** : Installez l'[Outil CLI](docs/cli-usage.md) pour empaqueter n'importe quel site d'une commande avec icône et fenêtres sur mesure
 - **Avancés** : Clonez le dépôt pour le [Développement personnalisé](#développement) ou consultez les [Fonctionnalités avancées](docs/advanced-usage.md)
 - **Dépannage** : Consultez la [FAQ](docs/faq.md) pour résoudre les problèmes courants
@@ -34,7 +35,7 @@
             <a href="https://github.com/tw93/Pake/releases/latest/download/WeRead_x64.msi">Windows</a>
             <a href="https://github.com/tw93/Pake/releases/latest/download/WeRead_x86_64.deb">Linux</a>
         </td>
-        <td>Twitter
+        <td>X
             <a href="https://github.com/tw93/Pake/releases/latest/download/Twitter.dmg">Mac</a>
             <a href="https://github.com/tw93/Pake/releases/latest/download/Twitter_x64.msi">Windows</a>
             <a href="https://github.com/tw93/Pake/releases/latest/download/Twitter_x86_64.deb">Linux</a>
@@ -142,9 +143,11 @@
     </tr>
 </table>
 
+D'autres applications sont disponibles dans les [Releases](https://github.com/tw93/Pake/releases).
+
 <details>
 
-<summary>🏂 Vous pouvez télécharger d'autres applications depuis les <a href="https://github.com/tw93/Pake/releases">Releases</a>. <b>Cliquez pour afficher les raccourcis</b></summary>
+<summary><b>Raccourcis clavier</b></summary>
 
 <br/>
 
@@ -213,7 +216,7 @@ Nécessite Rust `>=1.85` et Node `>=22` (LTS recommandée ; `>=20.9` fonctionne 
 # Installer les dépendances
 pnpm i
 
-# Développement local [clic droit pour ouvrir le mode debug]
+# Développement local, clic droit pour ouvrir les outils de débogage
 pnpm run dev
 
 # Compiler l'application
@@ -224,7 +227,7 @@ Pour la personnalisation de styles, l'ajout de fonctionnalités et la communicat
 
 ## Contributeurs
 
-Pake ne serait pas possible sans ces précieux contributeurs ❤️
+Pake ne serait pas possible sans ces précieux contributeurs
 
 <a href="https://github.com/tw93/Pake/graphs/contributors">
   <img src="./CONTRIBUTORS.svg?v=2" alt="Contributors" width="1000" />
@@ -232,14 +235,14 @@ Pake ne serait pas possible sans ces précieux contributeurs ❤️
 
 ## Soutien
 
-- La façon la plus directe de me soutenir est d'acheter [Mole for Mac](https://mole.fit), mon application de nettoyage pour Mac
+- La façon la plus directe de soutenir le développement de Pake est d'acheter l'[application de bureau Pake](https://pake.run/)
 - Si Pake vous est utile, n'hésitez pas à lui attribuer une étoile sur GitHub, à le [recommander](https://x.com/intent/tweet?url=https://github.com/tw93/Pake&text=Pake%20-%20Transformez%20n'importe%20quelle%20page%20web%20en%20application%20de%20bureau%20en%20une%20seule%20commande.%20Compatible%20macOS,%20Windows%20et%20Linux) autour de vous ou à ouvrir une issue ou une PR, y compris pour suggérer des sites qui feraient de bonnes applications de bureau
-- J'ai deux chattes, TangYuan et Coke, et si Pake vous rend service, vous pouvez leur offrir <a href="https://cats.tw93.fun?name=Pake" target="_blank">une friandise 🥩</a>
+- J'ai deux chattes, TangYuan et Coke, et si Pake vous rend service, vous pouvez leur offrir <a href="https://cats.tw93.fun?name=Pake" target="_blank">une friandise</a>
 
-Ceux qui ont déjà contribué 🐱
+Ceux qui ont déjà contribué
 
 <a href="https://cats.tw93.fun?name=Pake"><img src="https://raw.githubusercontent.com/tw93/sponsors/main/assets/sponsors.svg" width="1000" loading="lazy" /></a>
 
 ## Licence open source
 
-Pake est distribué sous licence GPL-3.0, voir [LICENSE](./LICENSE) et [Pake Output Exception](./LICENSE-EXCEPTION). Les applications créées avec Pake vous appartiennent entièrement et peuvent être utilisées ou distribuées librement. Si vous créez un fork pour un produit dérivé, merci de choisir un nom distinct et de citer Pake comme source.
+Pake est distribué sous licence GPL-3.0, voir [LICENSE](./LICENSE) et [Pake Output Exception](./LICENSE-EXCEPTION). Les applications créées avec Pake vous appartiennent entièrement et peuvent être utilisées ou distribuées librement. Si vous créez un fork pour un produit dérivé, merci de choisir un nom distinct et de citer Pake comme source. La CLI Pake reste open source sur le long terme.

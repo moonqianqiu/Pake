@@ -1,8 +1,7 @@
 <div align="center">
   <img src="https://raw.githubusercontent.com/tw93/Pake/ac5508cf519064684c4214fe3f263c58ad7aaf5f/assets/logo.png" width="138" />
   <h1>Pake</h1>
-  <p><b>一条命令把任意网页打包成桌面应用，支持 macOS、Windows 和 Linux</b></p>
-  <p><a href="https://pake.run">pake.run</a></p>
+  <p><b>一条命令把任意网页打包成桌面应用，支持 macOS、Windows 和 Linux，免费开源命令行，另有桌面版</b></p>
   <p><a href="README.md">English</a> · 中文 · <a href="README_TW.md">繁體</a> · <a href="README_JA.md">日本語</a> · <a href="README_KR.md">한국어</a> · <a href="README_DE.md">Deutsch</a> · <a href="README_FR.md">Français</a></p>
   <a href="https://x.com/HiTw93" target="_blank"><img alt="twitter" src="https://img.shields.io/badge/follow-Tw93-red?style=flat-square&logo=x"></a>
   <a href="https://t.me/+9f9gf4ZrFSQ2OWVl" target="_blank"><img alt="telegram" src="https://img.shields.io/badge/chat-telegram-blueviolet?style=flat-square&logo=Telegram"></a>
@@ -11,16 +10,18 @@
   <a href="https://github.com/tw93/Pake/issues?q=is%3Aissue+is%3Aclosed" target="_blank"><img alt="GitHub closed issues" src="https://img.shields.io/github/issues-closed/tw93/Pake.svg?style=flat-square"></a>
 </div>
 
+> 这个仓库是免费开源的 Pake CLI，下面的内容都一直免费。喜欢图形界面的话，Pake 桌面版要从唯一的官网 [pake.run](https://pake.run/zh) 单独下载。桌面版不用装 Node.js 和 Rust，从精选里选一个或者粘贴网址就能做好应用，改设置、更新应用和给不同账号做独立应用都在同一个窗口里。`pnpm install -g pake-cli` 只会安装命令行工具。
+
 ## 特性
 
-- 🎐 **体积小巧**：安装包相比 Electron 应用小近 20 倍，通常小于 10 MB，是 Nativefier 这类 Electron 套壳工具更轻的替代
-- 🚀 **性能优异**：基于 Rust Tauri，比传统 JS 框架更快，内存占用更少
-- ⚡ **使用简单**：命令行一键打包，或在线构建，无需复杂配置
-- 📦 **功能丰富**：支持快捷键透传、沉浸式窗口、拖拽、样式定制、去广告
+- **体积小巧**：安装包通常小于 10 MB，比 Electron 应用小近 20 倍，是 Nativefier 这类 Electron 套壳工具更轻的替代
+- **性能优异**：基于 Rust Tauri，用系统自带的 WebView 而不是打包一份 Chromium，内存占用比 Electron 应用更少
+- **使用简单**：命令行一键打包，或在线构建，无需复杂配置
+- **功能丰富**：支持快捷键透传、沉浸式窗口、拖拽、样式定制、去广告
 
 ## 快速开始
 
-- **新手用户**：直接下载现成的 [常用包](#常用包下载)，或通过 [在线构建](docs/github-actions-usage_CN.md) 无需环境配置即可打包
+- **新手用户**：用 [Pake 桌面版](https://pake.run/zh) 不碰命令行就能做应用，也可以直接下载现成的 [常用包](#常用包下载)，或通过 [在线构建](docs/github-actions-usage_CN.md) 无需环境配置即可打包
 - **开发者**：安装 [CLI 工具](docs/cli-usage_CN.md) 后一行命令打包任意网站，支持自定义图标、窗口等参数
 - **高级用户**：本地克隆项目进行 [定制开发](#定制开发)，或查看 [高级用法](docs/advanced-usage_CN.md) 实现样式定制、功能增强
 - **遇到问题**：查看 [常见问题](docs/faq_CN.md) 排查故障与使用疑问
@@ -34,7 +35,7 @@
             <a href="https://github.com/tw93/Pake/releases/latest/download/WeRead_x64.msi">Windows</a>
             <a href="https://github.com/tw93/Pake/releases/latest/download/WeRead_x86_64.deb">Linux</a>
         </td>
-        <td>Twitter
+        <td>X
             <a href="https://github.com/tw93/Pake/releases/latest/download/Twitter.dmg">Mac</a>
             <a href="https://github.com/tw93/Pake/releases/latest/download/Twitter_x64.msi">Windows</a>
             <a href="https://github.com/tw93/Pake/releases/latest/download/Twitter_x86_64.deb">Linux</a>
@@ -142,9 +143,11 @@
     </tr>
 </table>
 
+更多应用可以去 [Releases](https://github.com/tw93/Pake/releases) 下载。
+
 <details>
 
-<summary>🏂 更多应用可去 <a href="https://github.com/tw93/Pake/releases">Release</a> 下载，<b>点击展开快捷键说明</b></summary>
+<summary><b>快捷键说明</b></summary>
 
 <br/>
 
@@ -213,7 +216,7 @@ codex plugin add pake@pake
 # 安装依赖
 pnpm i
 
-# 本地开发[右键可打开调试模式]
+# 本地开发，右键可打开调试工具
 pnpm run dev
 
 # 打包应用
@@ -222,9 +225,9 @@ pnpm run build
 
 想要样式定制、功能增强、容器通信等高级玩法，查看 [高级用法文档](docs/advanced-usage_CN.md)。
 
-## 开发者
+## 贡献者
 
-Pake 的发展离不开这些优秀的贡献者 ❤️
+Pake 的发展离不开这些优秀的贡献者
 
 <a href="https://github.com/tw93/Pake/graphs/contributors">
   <img src="./CONTRIBUTORS.svg?v=2" alt="Contributors" width="1000" />
@@ -232,14 +235,14 @@ Pake 的发展离不开这些优秀的贡献者 ❤️
 
 ## 支持
 
-- 购买我做的 Mac 清理应用 [Mole for Mac](https://mole.fit)，是对我最直接的支持
+- 购买 [Pake 桌面版](https://pake.run/zh)，是对 Pake 开发最直接的支持
 - 如果你喜欢 Pake，可以在 GitHub 点个 Star，[推荐](https://x.com/intent/tweet?url=https://github.com/tw93/Pake&text=Pake%20-%20一键打包网页生成轻量桌面应用，比%20Electron%20小%2020%20倍，支持%20macOS%20Windows%20Linux) 给志同道合的朋友，遇到问题或发现适合做成桌面 App 的网页，也欢迎提 issue 和 PR
-- 我有两只猫，一只叫汤圆，一只叫可乐，假如 Pake 让你的生活更美好，可以给她们<a href="https://cats.tw93.fun?name=Pake" target="_blank">喂罐头 🥩</a>
+- 我有两只猫，一只叫汤圆，一只叫可乐，假如 Pake 让你的生活更美好，可以给她们<a href="https://cats.tw93.fun?name=Pake" target="_blank">喂罐头</a>
 
-这些可爱的朋友已经喂过了 🐱
+这些可爱的朋友已经喂过了
 
 <a href="https://cats.tw93.fun?name=Pake"><img src="https://raw.githubusercontent.com/tw93/sponsors/main/assets/sponsors.svg" width="1000" loading="lazy" /></a>
 
 ## 开源协议
 
-Pake 使用 GPL-3.0 协议开源，详见 [LICENSE](./LICENSE) 和 [Pake Output Exception](./LICENSE-EXCEPTION)，用 Pake 打包生成的应用所有权完全归你，可以自由使用和分发；假如你想基于 fork 重新做一个 Pake 产品，为了避免误解，辛苦换一个名字，并注明来源。
+Pake 使用 GPL-3.0 协议开源，详见 [LICENSE](./LICENSE) 和 [Pake Output Exception](./LICENSE-EXCEPTION)，用 Pake 打包生成的应用所有权完全归你，可以自由使用和分发；假如你想基于 fork 重新做一个 Pake 产品，为了避免误解，辛苦换一个名字，并注明来源。Pake CLI 会一直开源维护下去。

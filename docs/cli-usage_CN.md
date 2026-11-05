@@ -290,7 +290,7 @@ pake https://github.com --name GitHub
 
 #### [safe-domain]
 
-把指定域名及其子域名保留在应用内打开，便于处理企业 SSO 登录与授权跳转（如 Slack 搭配 Okta）。Pake 会把这个列表编译成 `internal_url_regex`；若同时传入 `--internal-url-regex`，则以显式正则为准。
+把指定域名及其子域名保留在应用内打开，便于处理企业 SSO 登录与授权跳转（如 Slack 搭配 Okta）。Pake 会把这个列表编译成 `internal_url_regex`；若同时传入 `--internal-url-regex`，则以显式正则为准。这个列表会替换掉默认的同域规则，所以应用自己的域名也要写进去，只写 `okta.com` 的话，应用自己站点上的链接会跑到浏览器里打开。
 
 `--safe-domain` 仅匹配 URL Host，不会因路径或 Query 参数中包含域名而发生误判。
 
@@ -392,7 +392,7 @@ pake https://github.com --name GitHub --no-bundle
 
 #### [user-agent]
 
-自定义浏览器 User-Agent 请求头，默认为空。
+自定义浏览器 User-Agent 请求头。不传时应用发送平台默认值，macOS 和 Linux 上是 Safari 字符串，Windows 上是 Chrome 字符串。
 
 ```shell
 --user-agent <string>
@@ -485,17 +485,6 @@ pake https://www.rememberthemilk.com --name RememberTheMilk --no-restore-last-ur
 
 # 示例：打包支持 WASM 的 Flutter Web 应用
 pake https://flutter.dev --name FlutterApp --wasm
-```
-
-#### [enable-drag-drop]
-
-启用原生拖拽支持，默认为 `false`，支持网页内元素拖拽排序及文件拖入上传等交互。
-
-```shell
---enable-drag-drop
-
-# 示例：打包需要拖拽交互的应用
-pake https://planka.example.com --name PlankApp --enable-drag-drop
 ```
 
 #### [keep-binary]
@@ -704,7 +693,7 @@ Linux 多 target 构建（如 `--targets deb,appimage`）时，若单个 target 
 
 #### [new-window]
 
-允许网页唤起新窗口（如 OAuth 登录弹窗、新标签页或会话窗口），有助于需要弹出授权窗口的站点，但能否在应用内完成登录仍取决于目标服务方的安全策略（部分服务商如 Google 可能会主动限制在嵌入式 WebView 中授权）。
+允许网页唤起新窗口（如 OAuth 登录弹窗、新标签页或会话窗口），有助于需要弹出授权窗口的站点，但能否在应用内完成登录仍取决于目标服务方的安全策略（部分服务商如 Google 可能会主动限制在嵌入式 WebView 中授权）。不加时，要求新窗口的链接和 `window.open` 会在当前窗口里打开。
 
 ```shell
 --new-window

@@ -207,7 +207,10 @@ ${green('|_|   \\__,_|_|\\_\\___|  can turn any webpage into a desktop app with 
         .hideHelp(),
     )
     .addOption(
-      new Option('--enable-drag-drop', 'Enable drag and drop functionality')
+      new Option(
+        '--enable-drag-drop',
+        'Deprecated and ignored: pages handle drag and drop by default',
+      )
         .default(DEFAULT.enableDragDrop)
         .hideHelp(),
     )
