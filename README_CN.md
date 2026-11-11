@@ -1,7 +1,7 @@
 <div align="center">
   <img src="https://raw.githubusercontent.com/tw93/Pake/ac5508cf519064684c4214fe3f263c58ad7aaf5f/assets/logo.png" width="138" />
   <h1>Pake</h1>
-  <p><b>一条命令把任意网页打包成桌面应用，支持 macOS、Windows 和 Linux，免费开源命令行，另有桌面版</b></p>
+  <p><b>一条命令把任意网页打包成轻量的桌面应用，支持 macOS、Windows 和 Linux，免费开源命令行，另有桌面版</b></p>
   <p><a href="README.md">English</a> · 中文 · <a href="README_TW.md">繁體</a> · <a href="README_JA.md">日本語</a> · <a href="README_KR.md">한국어</a> · <a href="README_DE.md">Deutsch</a> · <a href="README_FR.md">Français</a></p>
   <a href="https://x.com/HiTw93" target="_blank"><img alt="twitter" src="https://img.shields.io/badge/follow-Tw93-red?style=flat-square&logo=x"></a>
   <a href="https://t.me/+9f9gf4ZrFSQ2OWVl" target="_blank"><img alt="telegram" src="https://img.shields.io/badge/chat-telegram-blueviolet?style=flat-square&logo=Telegram"></a>
@@ -15,7 +15,7 @@
 ## 特性
 
 - **体积小巧**：安装包通常小于 10 MB，比 Electron 应用小近 20 倍，是 Nativefier 这类 Electron 套壳工具更轻的替代
-- **性能优异**：基于 Rust Tauri，用系统自带的 WebView 而不是打包一份 Chromium，内存占用比 Electron 应用更少
+- **性能优异**：基于 Rust Tauri，用系统自带的 WebView 而不是打包一份 Chromium，应用里不用再带一份浏览器引擎
 - **使用简单**：命令行一键打包，或在线构建，无需复杂配置
 - **功能丰富**：支持快捷键透传、沉浸式窗口、拖拽、样式定制、去广告
 

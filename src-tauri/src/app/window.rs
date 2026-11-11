@@ -30,7 +30,7 @@ use tauri::{
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::UI::{
     Shell::ExtractIconExW,
-    WindowsAndMessaging::{SendMessageW, ICON_BIG, WM_SETICON},
+    WindowsAndMessaging::{SendMessageW, ICON_BIG, ICON_SMALL, WM_SETICON},
 };
 
 use tauri::Theme;
@@ -134,17 +134,18 @@ pub fn open_additional_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     build_window_with_label(app, &state.pake_config, &state.tauri_config, &label)
 }
 
+/// The executable's own icon as (large, small) handles. A runtime template is one binary
+/// that a builder turns into many apps by patching the icon resource, so the icon compiled
+/// in as Tauri's default window icon is the template's, not the app's.
 #[cfg(target_os = "windows")]
-fn taskbar_icon_handle() -> Option<isize> {
-    static TASKBAR_ICON: OnceLock<Option<isize>> = OnceLock::new();
+fn executable_icon_handles() -> Option<(isize, isize)> {
+    static EXECUTABLE_ICONS: OnceLock<Option<(isize, isize)>> = OnceLock::new();
 
-    *TASKBAR_ICON.get_or_init(|| {
+    *EXECUTABLE_ICONS.get_or_init(|| {
         let executable = match std::env::current_exe() {
             Ok(path) => path,
             Err(error) => {
-                eprintln!(
-                    "[Pake] Failed to resolve the app executable for its taskbar icon: {error}"
-                );
+                eprintln!("[Pake] Failed to resolve the app executable for its icon: {error}");
                 return None;
             }
         };
@@ -154,33 +155,36 @@ fn taskbar_icon_handle() -> Option<isize> {
             .chain(std::iter::once(0))
             .collect();
         let mut large_icon = ptr::null_mut();
+        let mut small_icon = ptr::null_mut();
         let extracted = unsafe {
             ExtractIconExW(
                 executable_wide.as_ptr(),
                 0,
                 &mut large_icon,
-                ptr::null_mut(),
+                &mut small_icon,
                 1,
             )
         };
         if extracted == 0 || large_icon.is_null() {
             eprintln!(
-                "[Pake] Failed to extract the taskbar icon from {}.",
+                "[Pake] Failed to extract the app icon from {}.",
                 executable.display()
             );
             return None;
         }
 
-        // WM_SETICON keeps this handle rather than copying it. Cache the single
-        // extracted icon for the process lifetime so repeated tray restores do
+        // WM_SETICON keeps these handles rather than copying them. Cache the one
+        // extracted pair for the process lifetime so repeated tray restores do
         // not leak a new HICON or leave the window with a dangling handle.
-        Some(large_icon as isize)
+        Some((large_icon as isize, small_icon as isize))
     })
 }
 
 // Apps autostarted at Windows logon can register their icons before Explorer's
 // icon cache is ready (#1323). Re-assert both the small/title-bar icon and the
-// large taskbar icon whenever a window becomes visible.
+// large taskbar icon whenever a window becomes visible. Both come from the
+// executable: the default window icon alone left a runtime-template app with
+// the template's icon in its title bar while the taskbar showed the app's own.
 #[cfg(target_os = "windows")]
 pub fn reapply_window_icon(window: &WebviewWindow) {
     if let Some(icon) = window.app_handle().default_window_icon().cloned() {
@@ -189,15 +193,18 @@ pub fn reapply_window_icon(window: &WebviewWindow) {
         }
     }
 
-    let Some(taskbar_icon) = taskbar_icon_handle() else {
+    let Some((large_icon, small_icon)) = executable_icon_handles() else {
         return;
     };
     match window.hwnd() {
         Ok(hwnd) => unsafe {
-            SendMessageW(hwnd.0, WM_SETICON, ICON_BIG as usize, taskbar_icon);
+            SendMessageW(hwnd.0, WM_SETICON, ICON_BIG as usize, large_icon);
+            if small_icon != 0 {
+                SendMessageW(hwnd.0, WM_SETICON, ICON_SMALL as usize, small_icon);
+            }
         },
         Err(error) => {
-            eprintln!("[Pake] Failed to resolve the window handle for its taskbar icon: {error}");
+            eprintln!("[Pake] Failed to resolve the window handle for its icon: {error}");
         }
     }
 }
@@ -795,6 +802,9 @@ fn build_window(
     #[cfg(not(target_os = "windows"))]
     {
         let download_handle = app.clone();
+        // WKWebView reports no path when a download finishes, so remember where each was sent.
+        let destinations: std::sync::Mutex<std::collections::HashMap<String, PathBuf>> =
+            std::sync::Mutex::new(std::collections::HashMap::new());
         window_builder = window_builder.on_download(move |webview, event| match event {
             DownloadEvent::Requested { url, destination } => {
                 match get_download_dir(&download_handle) {
@@ -814,6 +824,9 @@ fn build_window(
                         let target = download_dir.join(sanitize_download_filename(&filename));
                         if let Some(path_str) = target.to_str() {
                             *destination = PathBuf::from(check_file_or_append(path_str));
+                            if let Ok(mut sent) = destinations.lock() {
+                                sent.insert(url.to_string(), destination.clone());
+                            }
                         } else {
                             eprintln!("[Pake] Download destination is not valid UTF-8");
                             return false;
@@ -835,23 +848,26 @@ fn build_window(
                 }
                 true
             }
-            DownloadEvent::Finished {
-                url: _,
-                path: _,
-                success,
-            } => {
+            DownloadEvent::Finished { url, path, success } => {
+                let saved = destinations
+                    .lock()
+                    .ok()
+                    .and_then(|mut sent| sent.remove(url.as_str()))
+                    .or(path);
                 // Toast on the window that started the download (including
                 // secondary multi-window labels), not a hard-coded "pake".
                 let toast_window = download_handle
                     .get_webview_window(webview.label())
                     .or_else(|| download_handle.get_webview_window("pake"));
                 if let Some(window) = toast_window {
-                    let message_type = if success {
-                        MessageType::Success
+                    if success {
+                        crate::util::show_download_finished(&window, saved, None);
                     } else {
-                        MessageType::Failure
-                    };
-                    show_toast(&window, &get_download_message_with_lang(message_type, None));
+                        show_toast(
+                            &window,
+                            &get_download_message_with_lang(MessageType::Failure, None),
+                        );
+                    }
                 }
                 true
             }
@@ -875,6 +891,22 @@ fn build_window(
 
     #[cfg(target_os = "windows")]
     crate::app::download::install(&window, download_target)?;
+
+    // Every webview is built here, so every one can be asked for the camera and microphone.
+    #[cfg(target_os = "linux")]
+    if let Err(error) = window.with_webview(|webview| {
+        crate::app::media_permission::install(&webview);
+        crate::app::recovery::install(&webview);
+    }) {
+        eprintln!("[Pake] Failed to access WebKitGTK for media permissions and recovery: {error}");
+    }
+
+    #[cfg(target_os = "windows")]
+    if let Err(error) = window.with_webview(|webview| {
+        crate::app::recovery::install(&webview);
+    }) {
+        eprintln!("[Pake] Failed to access WebView2 for crash recovery: {error}");
+    }
 
     // Every webview is built here (main window, Cmd+N clones, --new-window and
     // blank two-stage popups), so trackpad history swipes match in all of them.

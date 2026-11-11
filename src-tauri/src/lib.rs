@@ -29,9 +29,9 @@ const GDK_BACKEND: &str = "GDK_BACKEND";
 
 use app::{
     invoke::{
-        clear_dock_badge, close_notification, download_file, increment_dock_badge,
-        send_notification, set_dock_badge, set_dock_badge_label, set_title_bar_color, set_zoom,
-        update_theme_mode, webview_navigate,
+        clear_dock_badge, close_notification, download_file, increment_dock_badge, quit_app,
+        reveal_download, send_notification, set_dock_badge, set_dock_badge_label,
+        set_title_bar_color, set_zoom, update_theme_mode, webview_navigate,
     },
     setup::{set_global_shortcut, set_system_tray},
     window::{
@@ -126,7 +126,7 @@ fn is_niri_session(niri_socket: Option<&str>, desktop_values: &[Option<&str>]) -
 /// stability in general, three months before anything Wayland-specific, and
 /// upstream still reports the blank window it prevents on X11 with the NVIDIA
 /// proprietary driver (tauri-apps/tauri#9394). This is the legacy policy;
-/// apply_linux_webkit_runtime_flags substitutes SHM on WebKitGTK 2.52+ X11.
+/// apply_linux_webkit_runtime_flags substitutes SHM on WebKitGTK 2.52+.
 ///
 /// niri is excepted because #1226 was fixed by dropping both variables, and on
 /// WebKitGTK 2.52 either one alone is enough to undo that: disabling the dmabuf
@@ -296,6 +296,14 @@ pub fn run_app() {
     if pake_config.runtime_app {
         util::set_app_user_model_id(&tauri_config.identifier);
     }
+    // A runtime app's login item follows its own setting; a CLI build has none to keep.
+    if pake_config.runtime_app {
+        app::autostart::reconcile(
+            pake_config.launch_at_login,
+            &tauri_config.identifier,
+            tauri_config.product_name.as_deref().unwrap_or("Pake"),
+        );
+    }
     let mut context = tauri::generate_context!();
     // Paths, app data and the macOS menu derive from the context, so a runtime
     // app must not share the template's identity.
@@ -413,6 +421,8 @@ pub fn run_app() {
             set_zoom,
             webview_navigate,
             set_title_bar_color,
+            quit_app,
+            reveal_download,
         ])
         .setup(move |app| {
             // Grant remote IPC only to the immutable, packaged entry origins,
@@ -420,6 +430,7 @@ pub fn run_app() {
             if let Some(capability) = pake_config.remote_capability()? {
                 app.add_capability(capability)?;
             }
+            app.manage(crate::util::LastDownload::default());
             app.manage(MultiWindowState::new(
                 pake_config.clone(),
                 tauri_config.clone(),
